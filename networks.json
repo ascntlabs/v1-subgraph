@@ -1,0 +1,238 @@
+{
+  "sepolia": {
+    "PoolManager": {
+      "address": "0xE03A1074c86CFeDd5C142C4F04F1a1536e203543",
+      "startBlock": 7258946
+    },
+    "PositionManager": {
+      "address": "0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4",
+      "startBlock": 7259148
+    }
+  },
+  "unichain-sepolia": {
+    "PoolManager": {
+      "address": "0x00b036b58a818b1bc34d502d3fe730db729e62ac",
+      "startBlock": 7092034
+    },
+    "PositionManager": {
+      "address": "0xf969aee60879c54baaed9f3ed26147db216fd664",
+      "startBlock": 7094939
+    }
+  },
+  "arbitrum-sepolia": {
+    "PoolManager": {
+      "address": "0xFB3e0C6F74eB1a21CC1Da29aeC80D2Dfe6C9a317",
+      "startBlock": 105909222
+    },
+    "PositionManager": {
+      "address": "0xAc631556d3d4019C95769033B5E719dD77124BAc",
+      "startBlock": 105920123
+    }
+  },
+  "base-sepolia": {
+    "PoolManager": {
+      "address": "0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408",
+      "startBlock": 19088197
+    },
+    "PositionManager": {
+      "address": "0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80",
+      "startBlock": 20214494
+    }
+  },
+  "arbitrum-one": {
+    "PoolManager": {
+      "address": "0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32",
+      "startBlock": 297842872
+    },
+    "PositionManager": {
+      "address": "0xd88F38F930b7952f2DB2432Cb002E7abbF3dD869",
+      "startBlock": 297842893
+    }
+  },
+  "base": {
+    "PoolManager": {
+      "address": "0x498581fF718922c3f8e6A244956aF099B2652b2b",
+      "startBlock": 25350988
+    },
+    "PositionManager": {
+      "address": "0x7C5f5A4bBd8fD63184577525326123B519429bDc",
+      "startBlock": 25350993
+    }
+  },
+  "matic": {
+    "PoolManager": {
+      "address": "0x67366782805870060151383F4BbFF9daB53e5cD6",
+      "startBlock": 66980384
+    },
+    "PositionManager": {
+      "address": "0x1Ec2eBf4F37E7363FDfe3551602425af0B3ceef9",
+      "startBlock": 66980394
+    }
+  },
+  "bsc": {
+    "PoolManager": {
+      "address": "0x28e2Ea090877bF75740558f6BFB36A5ffeE9e9dF",
+      "startBlock": 45970610
+    },
+    "PositionManager": {
+      "address": "0x7A4a5c919aE2541AeD11041A1AEeE68f1287f95b",
+      "startBlock": 45970613
+    }
+  },
+  "optimism": {
+    "PoolManager": {
+      "address": "0x9a13F98Cb987694C9F086b1F5eB990EeA8264Ec3",
+      "startBlock": 130947675
+    },
+    "PositionManager": {
+      "address": "0x3C3Ea4B57a46241e54610e5f022E5c45859A1017",
+      "startBlock": 130947681
+    }
+  },
+  "avalanche": {
+    "PoolManager": {
+      "address": "0x06380C0e0912312B5150364B9DC4542BA0DbBc85",
+      "startBlock": 56195376
+    },
+    "PositionManager": {
+      "address": "0xB74b1F14d2754AcfcbBe1a221023a5cf50Ab8ACD",
+      "startBlock": 56195382
+    }
+  },
+  "worldchain-mainnet": {
+    "PoolManager": {
+      "address": "0xb1860D529182ac3BC1F51Fa2ABd56662b7D13f33",
+      "startBlock": 9111872
+    },
+    "PositionManager": {
+      "address": "0xC585E0f504613b5fBf874F21Af14c65260fB41fA",
+      "startBlock": 9111885
+    }
+  },
+  "zora-mainnet": {
+    "PoolManager": {
+      "address": "0x0575338e4C17006aE181B47900A84404247CA30f",
+      "startBlock": 25434534
+    },
+    "PositionManager": {
+      "address": "0xf66C7b99e2040f0D9b326B3b7c152E9663543D63",
+      "startBlock": 25434540
+    }
+  },
+  "mainnet": {
+    "PoolManager": {
+      "address": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+      "startBlock": 21688329
+    },
+    "PositionManager": {
+      "address": "0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e",
+      "startBlock": 21689089
+    },
+    "SimHookMVPLegacy": {
+      "address": "0x38fdC1B79148aBE3c621467e3Cc6556453B0f6C0",
+      "startBlock": 25524390
+    },
+    "CumHookMVPLegacy": {
+      "address": "0x29d6e0Ff868ba37fd81F84208B1BC6781dFfB0C0",
+      "startBlock": 24568925
+    },
+    "HookFactory": {
+      "address": "0xE8Da4C784F7D32a1007147756D91888861eA133A",
+      "startBlock": 25913296
+    },
+    "AscntGovernance": {
+      "address": "0x7a669Dc45A5720074B140754254AFd308B638341",
+      "startBlock": 25913296
+    }
+  },
+  "blast-mainnet": {
+    "PoolManager": {
+      "address": "0x1631559198A9e474033433b2958daBC135ab6446",
+      "startBlock": 14377311
+    },
+    "PositionManager": {
+      "address": "0x4AD2F4CcA2682cBB5B950d660dD458a1D3f1bAaD",
+      "startBlock": 14377316
+    }
+  },
+  "unichain": {
+    "PoolManager": {
+      "address": "0x1F98400000000000000000000000000000000004",
+      "startBlock": 25500
+    },
+    "PositionManager": {
+      "address": "0x4529A01c7A0410167c5740C487A8DE60232617bf",
+      "startBlock": 6819670
+    }
+  },
+  "soneium-mainnet": {
+    "PoolManager": {
+      "address": "0x360e68faccca8ca495c1b759fd9eee466db9fb32",
+      "startBlock": 2473300
+    },
+    "PositionManager": {
+      "address": "0x1b35d13a2e2528f192637f14b05f0dc0e7deb566",
+      "startBlock": 2473310
+    }
+  },
+  "celo": {
+    "PoolManager": {
+      "address": "0x288dc841A52FCA2707c6947B3A777c5E56cd87BC",
+      "startBlock": 43985160
+    },
+    "PositionManager": {
+      "address": "0xf7965f3981e4D5BC383BfBCb61501763e9068CA9",
+      "startBlock": 47387840
+    }
+  },
+  "monad": {
+    "PoolManager": {
+      "address": "0x188d586Ddcf52439676Ca21A244753fA19F9Ea8e",
+      "startBlock": 29255895
+    },
+    "PositionManager": {
+      "address": "0x5b7eC4a94fF9beDb700fb82aB09d5846972F4016",
+      "startBlock": 29255913
+    }
+  },
+  "xlayer-mainnet": {
+    "PoolManager": {
+      "address": "0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32",
+      "startBlock": 46460144
+    },
+    "PositionManager": {
+      "address": "0xcF1EAFC6928dC385A342E7C6491d371d2871458b",
+      "startBlock": 46106401
+    }
+  },
+  "megaeth-mainnet": {
+    "PoolManager": {
+      "address": "0x58dd83c317b03e6ebd72c3e912adf60a8e97aa95",
+      "startBlock": 3637446
+    },
+    "PositionManager": {
+      "address": "0xcae584c1f193cb3c090324ca8a1af4ce378e37e1",
+      "startBlock": 3637446
+    }
+  },
+  "linea": {
+    "PoolManager": {
+      "address": "0x248083fb965359d82b06c1f5322480dcfc1ad857",
+      "startBlock": 28974969
+    },
+    "PositionManager": {
+      "address": "0xddcad5775b2816a87495f207731b3571d7ee3c76",
+      "startBlock": 28974972
+    }
+  },
+  "tempo": {
+    "PoolManager": {
+      "address": "0x33620f62c5b9b2086dd6b62f4a297a9f30347029",
+      "startBlock": 6606180
+    },
+    "PositionManager": {
+      "address": "0x3fc79444f8eacc1894775493ff3fa41f1e35ce11",
+      "startBlock": 6606180
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "name": "ascnt-subgraph",
+  "version": "1.0.0",
+  "repository": "https://github.com/ascntlabs/v1-subgraph",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "build": "run-s codegen && graph build",
+    "build:docker": "docker build -t matchstick .",
+    "buildonly": "graph build",
+    "deploy:alchemy": "graph deploy --node https://subgraphs.alchemy.com/api/subgraphs/deploy --ipfs https://ipfs.satsuma.xyz",
+    "deploy:studio": "graph deploy",
+    "codegen": "graph codegen --output-dir src/types/",
+    "test": "graph test -d",
+    "test:no-tty": "docker run -i --rm --mount type=bind,source=$INIT_CWD,target=/matchstick matchstick",
+    "prepare": "husky install",
+    "generate-subgraph": "ts-node scripts/generate-subgraph.ts"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.98.1",
+    "@graphprotocol/graph-ts": "^0.32.0",
+    "@typescript-eslint/eslint-plugin": "^2.0.0",
+    "@typescript-eslint/parser": "^2.0.0",
+    "@uniswap/eslint-config": "^1.2.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^6.1.0",
+    "matchstick-as": "^0.6.0",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^1.18.2",
+    "typescript": "^3.5.2"
+  },
+  "dependencies": {
+    "graph": "^0.2.0",
+    "husky": "8.0.3",
+    "lint-staged": "^15.2.7",
+    "yaml": "^2.3.4"
+  },
+  "lint-staged": {
+    "*.{js,ts}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}

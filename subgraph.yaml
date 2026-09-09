@@ -1,0 +1,244 @@
+specVersion: 0.0.4
+description: Ascnt is a decentralized protocol for custom fee pools on Uniswap V4.
+repository: https://github.com/ascntlabs/v1-subgraph
+schema:
+  file: ./schema.graphql
+features:
+  - nonFatalErrors
+  - grafting
+graft:
+  # Base: v0.0.3's deployment (the published SimHookMVP version). Block 25913295
+  # is the last block before the governance/factory deploy (25913296), so every
+  # governance, factory and hook event is replayed from the new contracts'
+  # genesis, and the live SimHook is discovered through HookDeployed like any
+  # later hook. Studio prunes entity history to a near-head window and rejects a
+  # graft block it no longer retains. If that happens, do NOT just raise the
+  # block (HookDeployed would never be replayed): switch to the fallback branch
+  # feat/1.0.0-graft-fallback, which adds a static data source for the live hook
+  # and bootstraps Hook/Protocol state from contract reads.
+  base: QmXHVmWPo83ovhhAyZY4txaNnbnfBLeAjsYDYpFJ4E8iF2
+  block: 25913295
+dataSources:
+  - source:
+      abi: PoolManager
+      address: "0x000000000004444c5dc75cB358380D2e3dE08A90"
+      startBlock: 21688329
+    name: PoolManager
+    network: mainnet
+    kind: ethereum/contract
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings/poolManager.mapping.ts
+      entities:
+        - Pool
+        - Token
+      abis:
+        - name: ERC20
+          file: ./abis/ERC20.json
+        - name: ERC20SymbolBytes
+          file: ./abis/ERC20SymbolBytes.json
+        - name: ERC20NameBytes
+          file: ./abis/ERC20NameBytes.json
+        - name: PoolManager
+          file: ./abis/PoolManager.json
+        - name: AggregatorHook
+          file: ./abis/AggregatorHook.json
+      eventHandlers:
+        - event: Initialize(indexed bytes32,indexed address,indexed
+            address,uint24,int24,address,uint160,int24)
+          handler: handleInitialize
+        - event: ModifyLiquidity(indexed bytes32,indexed
+            address,int24,int24,int256,bytes32)
+          handler: handleModifyLiquidity
+        - event: Swap(indexed bytes32,indexed
+            address,int128,int128,uint160,uint128,int24,uint24)
+          handler: handleSwap
+  - source:
+      abi: PositionManager
+      address: "0xbd216513d74c8cf14cf4747e6aaa6420ff64ee9e"
+      startBlock: 21689089
+    name: PositionManager
+    network: mainnet
+    kind: ethereum/contract
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings/positionManager.mapping.ts
+      entities:
+        - Position
+      abis:
+        - name: PositionManager
+          file: ./abis/PositionManager.json
+      eventHandlers:
+        - event: Subscription(indexed uint256,indexed address)
+          handler: handleSubscription
+        - event: Unsubscription(indexed uint256,indexed address)
+          handler: handleUnsubscription
+        - event: Transfer(indexed address,indexed address,indexed uint256)
+          handler: handleTransfer
+  - kind: ethereum
+    name: SimHookMVPLegacy
+    network: mainnet
+    source:
+      address: "0x38fdC1B79148aBE3c621467e3Cc6556453B0f6C0"
+      abi: SimHookMVPLegacy
+      startBlock: 25524390
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings/ascnt.mapping.ts
+      entities:
+        - PoolManager
+        - Swap
+        - Pool
+      abis:
+        - name: SimHookMVPLegacy
+          file: ./abis/SimHookMVPLegacy.json
+      eventHandlers:
+        - event: AfterSwap(indexed bytes32,uint160,uint256,int256,uint256)
+          handler: handleAscntAfterSwap
+        - event: BeforeSwap(indexed bytes32,uint160,uint160,uint256,int256,uint24,uint24,uint256)
+          handler: handleAscntBeforeSwap
+        - event: PoolConfigured(indexed bytes32,bool,uint24,uint24,uint24,uint24,uint256,uint48,uint256)
+          handler: handleAscntConfigured
+        - event: PoolInitialized(indexed bytes32,indexed address,indexed address,uint24,int24,address,uint160,int24)
+          handler: handleAscntInitialized
+  - kind: ethereum
+    name: CumHookMVPLegacy
+    network: mainnet
+    source:
+      address: "0x29d6e0Ff868ba37fd81F84208B1BC6781dFfB0C0"
+      abi: CumHookMVPLegacy
+      startBlock: 24568925
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings/ascntLegacy.mapping.ts
+      entities:
+        - PoolManager
+        - Swap
+        - Pool
+      abis:
+        - name: CumHookMVPLegacy
+          file: ./abis/CumHookMVPLegacy.json
+      eventHandlers:
+        - event: AfterSwap(indexed bytes32,uint160,uint256,uint256,int256,uint256,uint256)
+          handler: handleAscntAfterSwapLegacy
+        - event: BeforeSwap(indexed bytes32,uint160,uint256,uint256,uint256,int256,uint24,uint256)
+          handler: handleAscntBeforeSwapLegacy
+        - event: PoolConfigured(indexed bytes32,bool,uint24,uint24,uint24,uint256,uint256,uint256)
+          handler: handleAscntConfiguredLegacy
+        - event: PoolInitialized(indexed bytes32,indexed address,indexed address,uint24,int24,address,uint160,int24)
+          handler: handleAscntInitializedLegacy
+  - kind: ethereum
+    name: HookFactory
+    network: mainnet
+    source:
+      # mainnet deploy 2026-09-05 (DeployProtocol.s.sol); see the Deployments table in the hook repo README
+      address: "0xE8Da4C784F7D32a1007147756D91888861eA133A"
+      abi: HookFactory
+      startBlock: 25913296
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings/hookFactory.mapping.ts
+      entities:
+        - Hook
+      abis:
+        - name: HookFactory
+          file: ./abis/HookFactory.json
+      eventHandlers:
+        - event: HookDeployed(indexed address,indexed bytes32)
+          handler: handleHookDeployed
+        - event: HookDeprecationChanged(indexed address,bool)
+          handler: handleHookDeprecationChanged
+  - kind: ethereum
+    name: AscntGovernance
+    network: mainnet
+    source:
+      # mainnet deploy 2026-09-05 (DeployProtocol.s.sol); see the Deployments table in the hook repo README
+      address: "0x7a669Dc45A5720074B140754254AFd308B638341"
+      abi: AscntGovernance
+      startBlock: 25913296
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings/governance.mapping.ts
+      entities:
+        - Protocol
+        - Hook
+      abis:
+        - name: AscntGovernance
+          file: ./abis/AscntGovernance.json
+      eventHandlers:
+        - event: TreasuryUpdated(indexed address)
+          handler: handleTreasuryUpdated
+        - event: ProtocolFeeBpsUpdated(uint16)
+          handler: handleProtocolFeeBpsUpdated
+        - event: AddLiquidityPauseSet(bool)
+          handler: handleAddLiquidityPauseSet
+        - event: HookAddLiquidityPauseSet(indexed address,bool)
+          handler: handleHookAddLiquidityPauseSet
+        - event: PauserUpdated(indexed address)
+          handler: handlePauserUpdated
+        - event: TimelockUpdated(indexed address)
+          handler: handleTimelockUpdated
+        - event: TimelockTransferStarted(indexed address,uint48)
+          handler: handleTimelockTransferStarted
+        - event: TimelockTransferCancelled(indexed address)
+          handler: handleTimelockTransferCancelled
+        - event: PoolDeployerUpdated(indexed address)
+          handler: handlePoolDeployerUpdated
+        - event: HookFactoryUpdated(indexed address)
+          handler: handleHookFactoryUpdated
+        - event: SubscriberRegistered(indexed address)
+          handler: handleSubscriberRegistered
+        - event: SubscriberRemoved(indexed address)
+          handler: handleSubscriberRemoved
+        - event: SubscriberPushFailed(indexed address,uint16)
+          handler: handleSubscriberPushFailed
+        - event: OwnershipTransferred(indexed address,indexed address)
+          handler: handleOwnershipTransferred
+templates:
+  - kind: ethereum
+    name: SimHook
+    network: mainnet
+    source:
+      abi: SimHook
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/mappings/simHook.mapping.ts
+      entities:
+        - PoolManager
+        - Pool
+        - Swap
+        - SwapStaging
+        - Hook
+        - ProtocolFeeCollection
+      abis:
+        - name: SimHook
+          file: ./abis/SimHook.json
+      eventHandlers:
+        - event: AfterSwap(indexed bytes32,uint160,uint256,int256)
+          handler: handleSimHookAfterSwap
+        - event: BeforeSwap(indexed bytes32,uint160,uint160,uint256,int256,uint24,uint24)
+          handler: handleSimHookBeforeSwap
+        - event: PoolConfigured(indexed bytes32,bool,uint24,uint24,uint24,uint256,uint48,uint32,uint32,uint256)
+          handler: handleSimHookConfigured
+        - event: PoolInitialized(indexed bytes32,indexed address,indexed address,uint24,int24,address,uint160,int24)
+          handler: handleSimHookInitialized
+        - event: ProtocolFeeTaken(indexed bytes32,indexed address,uint128,uint128)
+          handler: handleProtocolFeeTaken
+        - event: ProtocolFeeTakenAsClaims(indexed bytes32,indexed address,uint128,uint128)
+          handler: handleProtocolFeeTakenAsClaims
+        - event: ProtocolFeeBpsCached(uint16)
+          handler: handleProtocolFeeBpsCached
