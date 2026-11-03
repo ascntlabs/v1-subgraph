@@ -39,10 +39,8 @@ function eventAt(blockNumber: i32, logIndex: i32): ethereum.Event {
 }
 
 function ordinal(blockNumber: i32, logIndex: i32): string {
-  return BigInt.fromI32(blockNumber)
-    .times(RADIX)
-    .plus(BigInt.fromI32(logIndex))
-    .toString()
+  const blockPart = BigInt.fromI32(blockNumber).times(RADIX)
+  return blockPart.plus(BigInt.fromI32(logIndex)).toString()
 }
 
 function setPoolPrice(price: string): void {

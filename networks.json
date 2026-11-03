@@ -234,5 +234,23 @@
       "address": "0x3fc79444f8eacc1894775493ff3fa41f1e35ce11",
       "startBlock": 6606180
     }
+  },
+  "robinhood-mainnet": {
+    "PoolManager": {
+      "address": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+      "startBlock": 9070
+    },
+    "PositionManager": {
+      "address": "0x58daec3116aae6D93017bAAea7749052E8a04fA7",
+      "startBlock": 9073
+    },
+    "HookFactory": {
+      "address": "0xE8Da4C784F7D32a1007147756D91888861eA133A",
+      "startBlock": 65441107
+    },
+    "AscntGovernance": {
+      "address": "0x7a669Dc45A5720074B140754254AFd308B638341",
+      "startBlock": 65441107
+    }
   }
 }

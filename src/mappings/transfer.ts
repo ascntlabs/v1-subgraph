@@ -2,6 +2,7 @@ import { Transfer as TransferEvent } from '../types/PositionManager/PositionMana
 import { Position, Transfer } from '../types/schema'
 import { loadTransaction } from '../utils'
 import { eventId, positionId } from '../utils/id'
+import { initPositionState } from '../utils/position'
 
 // The subgraph handler must have this signature to be able to handle events,
 // however, we invoke a helper in order to inject dependencies for unit tests.
@@ -20,6 +21,7 @@ export function handleTransferHelper(event: TransferEvent): void {
     position.tokenId = event.params.id
     position.origin = event.transaction.from.toHexString()
     position.createdAtTimestamp = event.block.timestamp
+    initPositionState(position)
   }
 
   position.owner = to.toHexString()

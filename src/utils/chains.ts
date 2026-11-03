@@ -30,6 +30,11 @@ const XLAYER_MAINNET_NETWORK_NAME = 'xlayer-mainnet'
 const MEGAETH_MAINNET_NETWORK_NAME = 'megaeth-mainnet'
 const LINEA_MAINNET_NETWORK_NAME = 'linea'
 const TEMPO_NETWORK_NAME = 'tempo'
+// Goldsky indexes this chain as `robinhood-mainnet`; The Graph's networks registry
+// calls it `robinhood`. dataSource.network() returns whatever the manifest says, so
+// match both and the config works whichever host indexes it.
+const ROBINHOOD_NETWORK_NAME = 'robinhood'
+const ROBINHOOD_MAINNET_NETWORK_NAME = 'robinhood-mainnet'
 
 // Note: All token and pool addresses should be lowercased!
 export class SubgraphConfig {
@@ -49,9 +54,10 @@ export class SubgraphConfig {
   // for some chains
   wrappedNativeAddress: string
 
-  // the mimimum liquidity in a pool needed for it to be used to help calculate
-  // token prices. for new chains, this should be initialized to ~4000 USD
-  minimumNativeLocked: BigDecimal
+  // USD floor for a pool to price a token: twice its whitelisted leg, valued at
+  // the bundle's native price when the check runs, must exceed this. Upstream's
+  // native-denominated floor meant ~4000 USD; see README "Token pricing".
+  minimumUSDLocked: BigDecimal
 
   // list of stablecoin addresses
   stablecoinAddresses: string[]
@@ -67,6 +73,12 @@ export class SubgraphConfig {
 
   // skip the creation of these pools in handlePoolCreated. for new chains this is typically empty.
   poolsToSkip: string[]
+
+  // pre-factory Ascnt hooks (lowercase). They never emitted HookDeployed, so a
+  // Hook entity is created at the first Initialize on one, flagged deprecated and
+  // legacy, and every pool on it is an Ascnt pool from Initialize. Empty on chains
+  // that had no hooks before the factory. README "Legacy hooks".
+  legacyHookAddresses: string[]
 
   // initialize this list of pools and token addresses on factory creation. for new chains this is typically empty.
   poolMappings: Array<Address[]>
@@ -85,7 +97,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0xabdb9820d36431e092c155f7151c4c781f09fb4e1b7894fa918a0aadcac87e16',
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0xfff9976782d46cc05630d1f6ebab18b2324d6b14', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238', // USDC
         '0xaa8e23fb1079ea71e0a56f48a2aa51851d8433d0', // USDT
@@ -98,6 +110,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -111,7 +124,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x1927686e9757bb312fc499e480536d466c788dcdc86a1b62c82643157f05b603', // https://unichain-sepolia.blockscout.com/tx/0x6461a80bbdd78222097c8f0437952dba852f25c3822df50660e347ccd6436f6f?tab=logs
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0x4200000000000000000000000000000000000006', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x31d0220469e10c4e71834a79b1f276d740d3768f', // USDC
       ],
@@ -122,6 +135,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -135,7 +149,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '', // no v4 pool exists on arbitrum sepolia yet, this will result in $0 prices
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0x980b62da83eff3d4576c647993b0c1d7faf17c73', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x75faf114eafb1bdbe2f0316df893fd58ce46aa4d', // USDC
       ],
@@ -146,6 +160,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -159,7 +174,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0xcafe1ec4f71a632f8fc57506c478d0b25b399a9aa003c9bc02c444639578ae46', // https://sepolia.basescan.org/tx/0xa8a8ad7ed9fe1e44ce264f240821a33bfd93a385397b46fd7142deee242be2fa#eventlog
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0x4200000000000000000000000000000000000006', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x036cbd53842c5426634e7929541ec2318f3dcf7e', // USDC
       ],
@@ -171,6 +186,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -184,7 +200,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0xfc7b3ad139daaf1e9c3637ed921c154d1b04286f8a82b805a6c352da57028653', // https://arbiscan.io/tx/0xd2542ab5fa8cb1b0606c6f114d9589e35db6d02dee426b7d874bda7c6e05f641#eventlog
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8', // USDC.e
         '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1', // DAI
@@ -214,6 +230,7 @@ export function getSubgraphConfig(): SubgraphConfig {
         },
       ],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -227,7 +244,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x90333bb05c258fe0dddb2840ef66f1a05165aa7dac6815d24e807cc6ebd943a0', // https://basescan.org/tx/0xf7f4eb1aef74a635a1bf42d598049afbed8ec9e303be81bf168b94a71045decb#eventlog
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x4200000000000000000000000000000000000006', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', // USDC
       ],
@@ -239,6 +256,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -252,7 +270,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x15484bc239f7554e7ead77c45834c722d3f74a9b20826fdf21bbb1b026444286', // https://polygonscan.com/tx/0x6c94e24c0ddff6dd9bfa860561945330c81df85ebb4b1ecf75a459b016719314
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270', // WMATIC
-      minimumNativeLocked: BigDecimal.fromString('20000'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x2791bca1f2de4661ed88a30c99a7a9449aa84174', // USDC.e
         '0x8f3cf7ad23cd3cadbd9735aff958023239c6a063', // DAI
@@ -268,6 +286,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'POL',
@@ -281,7 +300,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x4c9dff5169d88f7fbf5e43fc8e2eb56bf9791785729b9fc8c22064a47af12052', // https://bscscan.com/tx/0x36c1e4c7b4105a0be337addc32b5564dd3494fccfe331bf9fe7c647163d27d05#eventlog
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', // WBNB
-      minimumNativeLocked: BigDecimal.fromString('10'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x55d398326f99059ff775485246999027b3197955', // USDT
         '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d', // USDC
@@ -294,6 +313,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'BNB',
@@ -307,7 +327,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0xedba0a2a9dc73acf4b130e07605cb4c212bbd98a31c9cd442cfb8cf5b4e093e7', // https://optimistic.etherscan.io/tx/0x5a7ce7eaa8a1ae27a84846b0152d2910ec8db0c4d62b0968e0a49830d882ad28
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0x4200000000000000000000000000000000000006', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1', // DAI
         '0x7f5c764cbc14f9669b88837ca1490cca17c31607', // USDC.e
@@ -336,6 +356,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       poolMappings: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       nativeTokenDetails: {
         symbol: 'ETH',
         name: 'Ethereum',
@@ -348,7 +369,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0xd7a8035ddd9ec1dba25e3b27b685927fe63d65281f21c1c1d21d122fc48caeb7', // https://snowtrace.io/tx/0x008bbcac5d411e48621c94f75f3dedf025a031d2633a548fb372f45f73db111d/eventlog?chainid=43114
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7', // WAVAX
-      minimumNativeLocked: BigDecimal.fromString('100'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0xd586e7f844cea2f87f50152665bcbc2c279d8d70', // DAI_E
         '0xba7deebbfc5fa1100fb055a87773e1e99cd3507a', // DAI
@@ -370,6 +391,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'AVAX',
@@ -383,7 +405,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x45c70c27c25654e8c73bc0d63ba350144de8207a73c53d38409d3e127d993dc7', // https://worldchain-mainnet.explorer.alchemy.com/tx/0x042848d1377542415c68a8f8901923f2e54a4596016890eefb7c5094e45775d7?tab=logs
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x4200000000000000000000000000000000000006', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x79a02482a880bce3f13e09da970dc34db4cd24d1', // USDC.e
       ],
@@ -397,6 +419,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -410,7 +433,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x8362fda2356bf98851192da5b5b89553dd92ad73f8e8d6be97f154ce72b0adfe', // https://explorer.zora.energy/tx/0x8a0cd1856e3c95918e78478ccc993a6e745e364d5036852f44033827be880a17
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x4200000000000000000000000000000000000006', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0xcccccccc7021b32ebb4e8c08314bd62f7c653ec4', // USDzC
       ],
@@ -421,6 +444,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -434,13 +458,11 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x4f88f7c99022eace4740c6898f59ce6a2e798a1e64ce54589720b7153eb224a7', // https://etherscan.io/tx/0x4e63fcc0dd42a2b317e77d17e236cadf77464a08ccece33a354bd8648b5f7419#eventlog
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('1000'),
       stablecoinAddresses: [
         '0x6b175474e89094c44da98b954eedeac495271d0f', // DAI
         '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC
         '0xdac17f958d2ee523a2206206994597c13d831ec7', // USDT
-        '0x0000000000085d4780b73119b644ae5ecd22b376', // TUSD
-        '0x956f47f50a910163d8bf957cf5846d573e7f87ca', // FEI
       ],
       whitelistTokens: [
         '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // WETH
@@ -460,13 +482,19 @@ export function getSubgraphConfig(): SubgraphConfig {
         '0x0bc529c00c6401aef6d220be8c6ea1667f6ad93e', // YFI
         '0x111111111117dc0aa78b770fa6a738034120c302', // 1INCH
         '0xdf5e0e81dff6faf3a7e52ba697820c5e32d806a8', // yCurv
-        '0x956f47f50a910163d8bf957cf5846d573e7f87ca', // FEI
         '0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0', // MATIC
         '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9', // AAVE
         '0xfe2e637202056d30016725477c5da089ab0a043a', // sETH2
         '0x0000000000000000000000000000000000000000', // Native ETH
         '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c', // EURC
         '0xdef1ca1fb7fbcdc777520aa7f396b4e015f497ab', // COW
+        '0x45804880de22913dafe09f4980848ece6ecbaf78', // PAXG
+        '0x68749665ff8d2d112fa859aa293f07a622782f38', // XAUT
+        '0xb58e61c3098d85632df34eecfb899a1ed80921cb', // ZCHF
+        '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984', // UNI
+        '0x58d97b57bb95320f9a05dc918aef65434969c2b2', // MORPHO
+        '0xa2ec76139028f279a1c790d323c57cc4158098d6', // IEFon (Ondo tokenised IEF)
+        '0xe905c437a30ae6d8c0576e0d9f6360b93b94976d', // IEIon (Ondo tokenised IEI)
       ],
       tokenOverrides: [
         {
@@ -508,6 +536,15 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       poolMappings: [],
       poolsToSkip: [],
+      legacyHookAddresses: [
+        '0x2d2523c292359e7dea2617214cb5ae62c79fb0c0', // Simple Price Impact
+        '0xde1949891ca439164a6850b98b4aed9cdcf0e0c0', // Cum PI (outdated)
+        '0x738042b4dc94b81c4eb14051d54180194963e0c0', // Cum PI 400bps (outdated)
+        '0xce361858db5737492f6d7240caa4ba786da8f0c0', // Cum PI 1-day
+        '0x86817f6d05e0991beb04686a26963a38461b70c0', // Cum PI 1-hour
+        '0x29d6e0ff868ba37fd81f84208b1bc6781dffb0c0', // Div Hook MVP (CumHookMVPLegacy data source)
+        '0x38fdc1b79148abe3c621467e3cc6556453b0f6c0', // Sim Hook MVP (SimHookMVPLegacy data source)
+      ],
       nativeTokenDetails: {
         symbol: 'ETH',
         name: 'Ethereum',
@@ -520,7 +557,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x83e7c9f12348a95a5fe02c8af7074dd52defd1e108e19e51234c49da56d7c635', // https://blastscan.io/tx/0x96ecf330532a794388405835ba7cc6687f281d3e44dee502fb89dc8d789fdf33
       stablecoinIsToken0: true,
       wrappedNativeAddress: '0x4300000000000000000000000000000000000004', // WETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x4300000000000000000000000000000000000003', // USDB
       ],
@@ -531,6 +568,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -544,7 +582,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x25939956ef14a098d95051d86c75890cfd623a9eeba055e46d8dd9135980b37c',
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x0000000000000000000000000000000000000000', // Native ETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x078d782b760474a361dda0af3839290b0ef57ad6', // USDC
         '0x20cab320a855b39f724131c69424240519573f81', // DAI
@@ -560,6 +598,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -573,7 +612,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x3d18457ff1dcfa8ffb14b162ae3def9eda618569ac4a6aadc827628f5981b515',
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x0000000000000000000000000000000000000000', // Native ETH
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0xba9986d2381edf1da03b0b9c1f8b00dc4aacc369', // USDC
       ],
@@ -584,6 +623,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -597,7 +637,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0x29aa9a73eedb0324148d5e43c5ebf2d479fbf04abea11e0d5afa7143387e30c6', // CELO-USDT
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x471ece3750da237f93b8e339c536989b8978a438', // CELO
-      minimumNativeLocked: BigDecimal.fromString('3600'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x765de816845861e75a25fca122bb6898b8b1282a', // CUSD
         '0xef4229c8c3250c675f21bcefa42f58efbff6002a', // Bridged USDC
@@ -620,6 +660,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'CELO',
@@ -633,7 +674,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: '0xadaf30776f551bccdfb307c3fd8cdec198ca9a852434c8022ee32d1ccedd8219',
       stablecoinIsToken0: false,
       wrappedNativeAddress: '0x0000000000000000000000000000000000000000', // Native MON
-      minimumNativeLocked: BigDecimal.fromString('100000'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [
         '0x754704bc059f8c67012fed69bc8a327a5aafb603', // USDC
         '0x00000000efe302beaa2b3e6e1b18d08d69a9012a', // AUSD
@@ -651,6 +692,7 @@ export function getSubgraphConfig(): SubgraphConfig {
       ],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'MON',
@@ -676,11 +718,12 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: nativeToUSDC,
       stablecoinIsToken0: false,
       wrappedNativeAddress: WOKB,
-      minimumNativeLocked: BigDecimal.fromString('25'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [USDC, USDT, DAI],
       whitelistTokens: [WOKB, WETH, USDT, USDT0, USDC, USDCe, WBTC, DAI, xETH, xSOL],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'OKB',
@@ -700,11 +743,12 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: nativeToUSDT0,
       stablecoinIsToken0: false,
       wrappedNativeAddress: WETH,
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [USDT0, USDm],
       whitelistTokens: [WETH, USDT0, USDm, MEGA],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -730,11 +774,12 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: NATIVE_USDC,
       stablecoinIsToken0: false,
       wrappedNativeAddress: WETH,
-      minimumNativeLocked: BigDecimal.fromString('1'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [USDC, USDT, MUSD, USDCE],
       whitelistTokens: [WETH, USDT, MUSD, LINEA, WBTC, REX33, WSTETH, EZETH, WEETH, USDCE],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'ETH',
@@ -754,16 +799,55 @@ export function getSubgraphConfig(): SubgraphConfig {
       stablecoinWrappedNativePoolId: PATHUSD_TO_USDCE_POOL,
       stablecoinIsToken0: false,
       wrappedNativeAddress: PATHUSD,
-      minimumNativeLocked: BigDecimal.fromString('2000'),
+      minimumUSDLocked: BigDecimal.fromString('4000'),
       stablecoinAddresses: [PATHUSD, USDT0, USDCE],
       whitelistTokens: [PATHUSD, USDT0, USDCE, EURC, FRXUSD],
       tokenOverrides: [],
       poolsToSkip: [],
+      legacyHookAddresses: [],
       poolMappings: [],
       nativeTokenDetails: {
         symbol: 'pathUSD',
         name: 'PathUSD',
         decimals: BigInt.fromI32(6),
+      },
+    }
+  } else if (selectedNetwork == ROBINHOOD_NETWORK_NAME || selectedNetwork == ROBINHOOD_MAINNET_NETWORK_NAME) {
+    const WETH = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73'.toLowerCase()
+    const USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168'.toLowerCase() // 6 decimals
+    // Reference pool is native ETH <> USDG (deeper than the WETH pair). Native ETH is
+    // address(0) in v4, so it sorts first and USDG is token1 -> stablecoinIsToken0: false.
+    // wrappedNativeAddress stays WETH on purpose: findNativePerToken pins ADDRESS_ZERO to
+    // 1 unconditionally, so naming WETH there pins both it and native ETH to 1 ETH.
+    const ETH_TO_USDG_POOL = '0x24107d152f14a76d292123265ae3f3c71f863fc2f4ef7ba49d64e78d28ea379e'
+    return {
+      poolManagerAddress: '0x8366a39CC670B4001A1121B8F6A443A643e40951'.toLowerCase(),
+      stablecoinWrappedNativePoolId: ETH_TO_USDG_POOL,
+      stablecoinIsToken0: false,
+      wrappedNativeAddress: WETH,
+      minimumUSDLocked: BigDecimal.fromString('1000'),
+      stablecoinAddresses: [USDG],
+      whitelistTokens: [
+        '0x0000000000000000000000000000000000000000', // Native ETH
+        WETH,
+        USDG,
+        '0xc9a981fee1f9dec688bb123ccdecc63d0debfc4e', // GLD
+        '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec', // NVDA
+        '0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea', // SPCX
+        '0x117cc2133c37b721f49de2a7a74833232b3b4c0c', // SPY
+        '0xbe274710bf3d9567e1b290ef6a5f9f90ca016fd8', // SHY (1-3 yr treasury)
+        '0x92fd66527192e3e61d4ddd13322aa222de86f9b5', // SGOV (0-3 month treasury)
+        '0xd5f3879160bc7c32ebb4dc785f8a4f505888de68', // QQQ
+        '0x411efb0e7f985935daec3d4c3ebaea0d0ad7d89f', // SLV
+      ],
+      tokenOverrides: [],
+      poolsToSkip: [],
+      legacyHookAddresses: [],
+      poolMappings: [],
+      nativeTokenDetails: {
+        symbol: 'ETH',
+        name: 'Ethereum',
+        decimals: BigInt.fromI32(18),
       },
     }
   } else {
@@ -784,6 +868,9 @@ export function getUSDStableStableHookAddresses(): string[] {
 export function getPositionManagerAddress(): string {
   if (dataSource.network() == MAINNET_NETWORK_NAME) {
     return '0xbd216513d74c8cf14cf4747e6aaa6420ff64ee9e'
+  }
+  if (dataSource.network() == ROBINHOOD_NETWORK_NAME || dataSource.network() == ROBINHOOD_MAINNET_NETWORK_NAME) {
+    return '0x58daec3116aae6d93017baaea7749052e8a04fa7'
   }
   return ''
 }

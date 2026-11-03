@@ -9,10 +9,10 @@ type PoolManager @entity(immutable: false) {
   totalVolumeUSD: BigDecimal!
   # total volume all time in derived ETH
   totalVolumeETH: BigDecimal!
-  # total swap fees all time in USD
-  totalFeesUSD: BigDecimal!
-  # total swap fees all time in USD
-  totalFeesETH: BigDecimal!
+  # LP fees all time in USD (Uniswap's and Ascnt's cuts excluded)
+  totalLpFeesUSD: BigDecimal!
+  # LP fees all time in ETH
+  totalLpFeesETH: BigDecimal!
   # all volume even through less reliable USD values
   untrackedVolumeUSD: BigDecimal!
   # TVL derived in USD
@@ -54,8 +54,8 @@ type Token @entity(immutable: false) {
   volumeUSD: BigDecimal!
   # volume in USD even on pools with less reliable USD values
   untrackedVolumeUSD: BigDecimal!
-  # fees in USD
-  feesUSD: BigDecimal!
+  # LP fees in USD across the pools that include this token
+  lpFeesUSD: BigDecimal!
   # transactions across all pools that include this token
   txCount: BigInt!
   # number of pools containing this token
@@ -66,6 +66,9 @@ type Token @entity(immutable: false) {
   totalValueLockedUSD: BigDecimal!
   # TVL derived in USD untracked
   totalValueLockedUSDUntracked: BigDecimal!
+  # price in the chain's native token: 1 for ETH/WETH, 1 / ethPriceUSD for the
+  # chain's stablecoinAddresses, otherwise from the largest whitelist pool swapped
+  # in the last 24h that clears the USD floor (README "Token pricing").
   # Note: for chains where ETH is not the native token, this will be the derived
   # price of that chain's native token, effectively, this should be renamed
   # derivedNative
@@ -87,10 +90,34 @@ type Pool @entity(immutable: false) {
   token0: Token!
   # token1
   token1: Token!
-  # fee amount
+  # The pool key's fee from Initialize, in pips (1e6 = 100%): the static tier, or
+  # the dynamic-fee flag 8388608 (0x800000) on dynamic pools. Never changed by
+  # swaps, so a PoolKey built from it hashes to this pool. README "Pool fee and
+  # TVL semantics".
   feeTier: BigInt!
-  # dynamic fee pool
+  # dynamic fee pool (feeTier is the flag; poolFee carries the rate)
   isDynamicFee: Boolean!
+  # --- rates of the last swap, in pips; 0 on dynamic pools until the first swap ---
+  # Rate the pool charged before Uniswap's cut: feeTier on static pools; on Ascnt
+  # pools the dynamic fee the hook chose, LP share + Ascnt's cut (equals
+  # dynamicFeePips); on other dynamic-fee pools the LP fee recovered from Swap.fee.
+  poolFee: BigInt!
+  # LP revenue rate: poolFee minus Ascnt's cut, so equal to poolFee on every pool
+  # that is not an Ascnt pool. Recovered from Swap.fee and the Uniswap rate of the
+  # swap's direction (lpFeeFromSwapFee).
+  lpFee: BigInt!
+  # Ascnt's cut: poolFee - lpFee. 0 off Ascnt pools.
+  ascntProtocolFee: BigInt!
+  # Uniswap's protocol fee on this pool in pips of gross swap input, per swap
+  # direction, from PoolManager.ProtocolFeeUpdated (packed uint24: low 12 bits
+  # zeroForOne, high 12 bits oneForZero). v4-core initialises pools at 0. This
+  # is Uniswap's fee, unrelated to Ascnt's ascntProtocolFees* below.
+  uniswapProtocolFeeZeroForOne: BigInt!
+  uniswapProtocolFeeOneForZero: BigInt!
+  # Everything the swapper paid on the last swap in pips: poolFee + Uniswap's
+  # rate for that direction. Not the Swap event's own fee on Ascnt pools, where
+  # the hook takes its cut outside the pool's fee.
+  totalSwapFee: BigInt!
   # in range liquidity
   liquidity: BigInt!
   # current price tracker
@@ -113,19 +140,26 @@ type Pool @entity(immutable: false) {
   volumeUSD: BigDecimal!
   # all time USD swapped, unfiltered for unreliable USD pools
   untrackedVolumeUSD: BigDecimal!
-  # fees in USD
-  feesUSD: BigDecimal!
+  # LP fees in USD: tracked volume x (Swap.fee - Uniswap's rate) / 1e6, exactly
+  # the share Pool.swap credits to feeGrowthGlobal. Uniswap's and Ascnt's cuts
+  # are accumulated separately.
+  lpFeesUSD: BigDecimal!
+  # LP fees per token, decimal units; each swap's fee lands on its input token
+  lpFeesToken0: BigDecimal!
+  lpFeesToken1: BigDecimal!
+  # Uniswap's protocol cut: tracked volume x its rate, and per input token
+  uniswapProtocolFeesUSD: BigDecimal!
+  uniswapProtocolFeesToken0: BigDecimal!
+  uniswapProtocolFeesToken1: BigDecimal!
   # all time number of transactions
   txCount: BigInt!
-  # all time fees collected token0
-  collectedFeesToken0: BigDecimal!
-  # all time fees collected token1
-  collectedFeesToken1: BigDecimal!
-  # all time fees collected derived USD
-  collectedFeesUSD: BigDecimal!
-  # total token 0 across all ticks
+  # block timestamp of the last swap; null until the first. Token pricing prefers
+  # pools swapped within the last 24h (README "Token pricing").
+  lastSwapTimestamp: BigInt
+  # token0 backing liquidity across all ticks, fees excluded (README "Pool fee
+  # and TVL semantics"); equals integrating Tick.liquidityNet at sqrtPrice
   totalValueLockedToken0: BigDecimal!
-  # total token 1 across all ticks
+  # token1 backing liquidity across all ticks, fees excluded
   totalValueLockedToken1: BigDecimal!
   # tvl derived ETH
   totalValueLockedETH: BigDecimal!
@@ -143,13 +177,26 @@ type Pool @entity(immutable: false) {
   poolDayData: [PoolDayData!]! @derivedFrom(field: "pool")
   # hooks address
   hooks: String!
+  # the Hook entity behind `hooks`, when the subgraph has one: factory-deployed
+  # (HookDeployed) or legacy (SubgraphConfig.legacyHookAddresses). Null for hookless
+  # pools and third-party hooks. hook.deprecated / hook.legacy are the pool's status.
+  hook: Hook
   # derived fields
   modifyLiquiditys: [ModifyLiquidity!]! @derivedFrom(field: "pool")
   swaps: [Swap!]! @derivedFrom(field: "pool")
   ticks: [Tick!]! @derivedFrom(field: "pool")
+  # PositionManager positions in the pool (README "Positions")
+  positions: [Position!]! @derivedFrom(field: "pool")
   # --- Ascnt-specific fields ---
-  # Ascnt pool flag
+  # Ascnt pool flag. Set when the pool's hook emits PoolInitialized, or at
+  # Initialize on a legacy hook (README "Legacy hooks"); cleared when governance
+  # removes that hook from the subscriber registry (SubscriberRemoved), after
+  # which the Ascnt swap overlay below stops accruing for this pool.
   isAscntPool: Boolean!
+  # block / timestamp at which isAscntPool was cleared by SubscriberRemoved
+  # (null while still an Ascnt pool, or never one). Nullable for graft compatibility.
+  ascntRemovedAtBlock: BigInt
+  ascntRemovedAtTimestamp: BigInt
   # is pool configured
   configured: Boolean
   # min fee
@@ -170,13 +217,13 @@ type Pool @entity(immutable: false) {
   kPips: BigInt
   # midpoint-fee leg weight on imbalance-decreasing legs, in pips (gov-version hooks)
   cPips: BigInt
-  # cumulative protocol fees taken in token0 raw units (direct + as-claims).
-  # Nullable so the schema stays graft-compatible with pre-v1.0.0 deployments
-  # (grafts may only add nullable fields); null reads as zero.
-  # TODO: remove this comment after old hooks are deprecated
-  protocolFeesToken0: BigInt
-  # cumulative protocol fees taken in token1 raw units (direct + as-claims); see token0
-  protocolFeesToken1: BigInt
+  # Ascnt's cut taken by the hook (ProtocolFeeTaken / ProtocolFeeTakenAsClaims),
+  # cumulative, in decimal token units. It lands on the swap's unspecified
+  # currency, so exactly one side moves per take.
+  ascntProtocolFeesToken0: BigDecimal!
+  ascntProtocolFeesToken1: BigDecimal!
+  # Ascnt's cut in USD, valued at the moment each take happened
+  ascntProtocolFeesUSD: BigDecimal!
   # protocol fee collections on this pool
   protocolFeeCollections: [ProtocolFeeCollection!]! @derivedFrom(field: "pool")
   # --- Ascnt before-swap fields ---
@@ -275,6 +322,17 @@ type Swap @entity(immutable: false) {
   tick: BigInt!
   # index within the txn
   logIndex: BigInt
+  # --- fee rates of this swap, in pips (see the Pool fields of the same name) ---
+  # rate the pool charged before Uniswap's cut
+  poolFee: BigInt!
+  # LP revenue rate: poolFee minus Ascnt's cut
+  lpFee: BigInt!
+  # Ascnt's cut: poolFee - lpFee (0 off Ascnt pools)
+  ascntProtocolFee: BigInt!
+  # Uniswap's protocol fee for this swap's direction
+  uniswapProtocolFee: BigInt!
+  # everything the swapper paid: poolFee + uniswapProtocolFee
+  totalSwapFee: BigInt!
   # --- Ascnt-specific fields ---
   # sqrt(price) of pool before swap, as Q64.96
   sqrtPriceX96Before: BigInt
@@ -317,14 +375,19 @@ type ModifyLiquidity @entity(immutable: true) {
   sender: Bytes
   # txn origin
   origin: Bytes! # the EOA that initiated the txn
-  # amount of liquidity modified
+  # liquidity delta: positive for an add, negative for a remove
   amount: BigInt!
-  # amount of token 0 modified
+  # token0 moved at the pool's price when the event fired, signed like `amount`
   amount0: BigDecimal!
-  # amount of token 1 modified
+  # token1 moved, signed like `amount`
   amount1: BigDecimal!
-  # derived amount based on available prices of tokens
-  amountUSD: BigDecimal
+  # amount0 and amount1 valued at the tokens' derived prices of the moment, signed
+  # like `amount`; 0 while neither token has a price
+  amountUSD: BigDecimal!
+  # pool sqrt(price) (Q64.96) and tick when the event fired; liquidity changes do
+  # not move price, so these are the exact prices the amounts were computed at
+  sqrtPrice: BigInt!
+  tick: BigInt!
   # lower tick of the position
   tickLower: BigInt!
   # upper tick of the position
@@ -361,8 +424,12 @@ type PoolDayData @entity(immutable: false) {
   volumeToken1: BigDecimal!
   # volume in USD
   volumeUSD: BigDecimal!
-  # fees in USD
-  feesUSD: BigDecimal!
+  # LP fees in USD
+  lpFeesUSD: BigDecimal!
+  # Uniswap's protocol cut in USD
+  uniswapProtocolFeesUSD: BigDecimal!
+  # Ascnt's cut in USD, valued when taken
+  ascntProtocolFeesUSD: BigDecimal!
   # number of transactions during period
   txCount: BigInt!
   # number of swaps during period
@@ -419,9 +486,13 @@ type PoolHourData @entity(immutable: false) {
   volumeToken1: BigDecimal!
   # volume in USD
   volumeUSD: BigDecimal!
-  # fees in USD
-  feesUSD: BigDecimal!
-  # numebr of transactions during period
+  # LP fees in USD
+  lpFeesUSD: BigDecimal!
+  # Uniswap's protocol cut in USD
+  uniswapProtocolFeesUSD: BigDecimal!
+  # Ascnt's cut in USD, valued when taken
+  ascntProtocolFeesUSD: BigDecimal!
+  # number of transactions during period
   txCount: BigInt!
   # number of swaps during period
   swapCount: BigInt!
@@ -467,8 +538,8 @@ type TokenDayData @entity(immutable: false) {
   totalValueLockedUSD: BigDecimal!
   # price at end of period in USD
   priceUSD: BigDecimal!
-  # fees in USD
-  feesUSD: BigDecimal!
+  # LP fees in USD
+  lpFeesUSD: BigDecimal!
   # OHLC of token USD price, written by swaps ONLY; see PoolDayData.open.
   # opening price USD (null until first swap of period)
   open: BigDecimal
@@ -503,8 +574,8 @@ type TokenHourData @entity(immutable: false) {
   totalValueLockedUSD: BigDecimal!
   # price at end of period in USD
   priceUSD: BigDecimal!
-  # fees in USD
-  feesUSD: BigDecimal!
+  # LP fees in USD
+  lpFeesUSD: BigDecimal!
   # OHLC of token USD price, written by swaps ONLY; see PoolDayData.open.
   # opening price USD (null until first swap of period)
   open: BigDecimal
@@ -531,6 +602,40 @@ type Position @entity(immutable: false) {
   origin: String!
   # created time
   createdAtTimestamp: BigInt!
+  # --- state folded from the PositionManager-routed ModifyLiquidity events
+  # (README "Positions"). Principal only: v4 emits no fee amounts, so the fees a
+  # modify pays out appear nowhere here. ---
+  # pool, range and entry price, set by the first ModifyLiquidity (the mint) and
+  # never changed; null for the one log between the NFT Transfer and that event
+  pool: Pool
+  tickLower: BigInt
+  tickUpper: BigInt
+  # pool sqrt(price) (Q64.96) and tick at the mint
+  mintSqrtPrice: BigInt
+  mintTick: BigInt
+  # liquidity in the position now: running sum of ModifyLiquidity.amount
+  liquidity: BigInt!
+  # ModifyLiquidity events seen, zero-delta ones (fee collections) included
+  modifyCount: BigInt!
+  # principal added by positive deltas / removed by negative ones, decimal units,
+  # both as positive numbers; deposited - withdrawn is the net principal
+  depositedToken0: BigDecimal!
+  depositedToken1: BigDecimal!
+  withdrawnToken0: BigDecimal!
+  withdrawnToken1: BigDecimal!
+  # the same flows valued at each event's own prices (derivedETH, Bundle.ethPriceUSD);
+  # depositedUSD - withdrawnUSD is the net cost basis, likewise in ETH
+  depositedUSD: BigDecimal!
+  withdrawnUSD: BigDecimal!
+  depositedETH: BigDecimal!
+  withdrawnETH: BigDecimal!
+  # timestamp of the latest ModifyLiquidity
+  lastModifiedTimestamp: BigInt
+  # timestamp of the removal that took liquidity to 0; null while liquidity > 0
+  # (cleared again when liquidity is re-added)
+  closedAtTimestamp: BigInt
+  # one snapshot per ModifyLiquidity (id suffix = modifyCount after it)
+  snapshots: [PositionSnapshot!]! @derivedFrom(field: "position")
   # subscribe events
   subscriptions: [Subscribe!]! @derivedFrom(field: "position")
   # unsubscription events
@@ -539,6 +644,48 @@ type Position @entity(immutable: false) {
   transfers: [Transfer!]! @derivedFrom(field: "position")
   # liquidity modifications for this position
   modifyLiquiditys: [ModifyLiquidity!]! @derivedFrom(field: "position")
+}
+
+# A PositionManager position's state after each of its ModifyLiquidity events: the
+# history behind entry price, cost basis and per-leg capital. Principal only, see
+# Position and README "Positions".
+type PositionSnapshot @entity(immutable: true) {
+  # position id + "#" + Position.modifyCount after this event (1 for the mint)
+  id: ID!
+  position: Position!
+  pool: Pool!
+  # owner at the time of the event
+  owner: String!
+  transaction: Transaction!
+  # the ModifyLiquidity row this snapshot follows
+  modifyLiquidity: ModifyLiquidity!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+  logIndex: BigInt!
+  # the event's liquidity delta and the position's liquidity after it
+  liquidityDelta: BigInt!
+  liquidity: BigInt!
+  # principal moved by this event, signed like liquidityDelta, decimal units
+  amount0: BigDecimal!
+  amount1: BigDecimal!
+  amountUSD: BigDecimal!
+  amountETH: BigDecimal!
+  # the Position accumulators after this event
+  depositedToken0: BigDecimal!
+  depositedToken1: BigDecimal!
+  withdrawnToken0: BigDecimal!
+  withdrawnToken1: BigDecimal!
+  depositedUSD: BigDecimal!
+  withdrawnUSD: BigDecimal!
+  depositedETH: BigDecimal!
+  withdrawnETH: BigDecimal!
+  # pool sqrt(price) (Q64.96) and tick when the event fired
+  sqrtPrice: BigInt!
+  tick: BigInt!
+  # the prices the USD / ETH figures were computed at
+  ethPriceUSD: BigDecimal!
+  token0DerivedETH: BigDecimal!
+  token1DerivedETH: BigDecimal!
 }
 
 type Subscribe @entity(immutable: true) {
@@ -608,22 +755,38 @@ type Hook @entity(immutable: false) {
   salt: Bytes!
   # factory that deployed the hook (zero address if not seen via HookDeployed)
   factory: Bytes!
-  # deploy time
+  # deploy time (first Initialize seen on it for a legacy hook)
   createdAtTimestamp: BigInt!
-  # deploy block
+  # deploy block (first Initialize seen on it for a legacy hook)
   createdAtBlockNumber: BigInt!
-  # factory deprecation flag
+  # factory deprecation flag (HookDeprecationChanged); true from creation on a legacy hook
   deprecated: Boolean!
+  # pre-factory hook (the MVP and price-impact hooks before the HookFactory): no
+  # HookDeployed, no on-chain deprecation attestation. Listed per chain in
+  # SubgraphConfig.legacyHookAddresses; created at the first Initialize on it,
+  # deprecated from the start, and every pool on it is an Ascnt pool from
+  # Initialize so lifetime volume and fees keep counting. README "Legacy hooks".
+  legacy: Boolean!
   # per-hook add-liquidity pause set by governance
   addLiquidityPaused: Boolean!
-  # hook-local cached protocol fee bps (null until first ProtocolFeeBpsCached)
+  # hook-local cached protocol fee bps, mirroring AscntBaseHook.protocolFeeBps.
+  # Seeded at HookDeployed from the factory's governance bps (the constructor
+  # copies that value without emitting an event), then overwritten by every
+  # ProtocolFeeBpsCached. Null only for hooks first seen without a HookDeployed.
   cachedProtocolFeeBps: BigInt
   # registered as a governance fee-bps subscriber
   isSubscriber: Boolean!
+  # block / timestamp of SubscriberRemoved for this hook (null if never removed;
+  # removal is one-way on-chain, and legacy hooks were never registered).
+  # Nullable for graft compatibility.
+  subscriberRemovedAtBlock: BigInt
+  subscriberRemovedAtTimestamp: BigInt
   # number of failed governance bps pushes to this hook
   subscriberPushFailCount: BigInt!
   # protocol fee collections taken by this hook
   protocolFeeCollections: [ProtocolFeeCollection!]! @derivedFrom(field: "hook")
+  # pools initialised on this hook (Pool.hook)
+  pools: [Pool!]! @derivedFrom(field: "hook")
 }
 
 # Current governance state (one entity per AscntGovernance contract)

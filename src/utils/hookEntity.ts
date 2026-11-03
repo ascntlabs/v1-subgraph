@@ -18,11 +18,25 @@ export function loadOrCreateHook(address: Address, event: ethereum.Event): Hook 
     hook.createdAtTimestamp = event.block.timestamp
     hook.createdAtBlockNumber = event.block.number
     hook.deprecated = false
+    hook.legacy = false
     hook.addLiquidityPaused = false
     hook.isSubscriber = false
     hook.subscriberPushFailCount = ZERO_BI
     hook.save()
   }
 
+  return hook
+}
+
+// Pre-factory hooks (SubgraphConfig.legacyHookAddresses) never emitted
+// HookDeployed, so their entity is created at the first Initialize on them:
+// zeroed provenance, deprecated from the start, legacy. Idempotent.
+export function loadOrCreateLegacyHook(address: Address, event: ethereum.Event): Hook {
+  const hook = loadOrCreateHook(address, event)
+  if (!hook.legacy) {
+    hook.deprecated = true
+    hook.legacy = true
+    hook.save()
+  }
   return hook
 }

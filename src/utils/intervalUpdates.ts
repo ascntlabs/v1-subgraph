@@ -56,7 +56,9 @@ export function updatePoolDayData(
     poolDayData.volumeToken0 = ZERO_BD
     poolDayData.volumeToken1 = ZERO_BD
     poolDayData.volumeUSD = ZERO_BD
-    poolDayData.feesUSD = ZERO_BD
+    poolDayData.lpFeesUSD = ZERO_BD
+    poolDayData.uniswapProtocolFeesUSD = ZERO_BD
+    poolDayData.ascntProtocolFeesUSD = ZERO_BD
     poolDayData.txCount = ZERO_BI
     poolDayData.swapCount = ZERO_BI
     poolDayData.sumDynamicFeePips = ZERO_BI
@@ -122,7 +124,9 @@ export function updatePoolHourData(
     poolHourData.volumeToken0 = ZERO_BD
     poolHourData.volumeToken1 = ZERO_BD
     poolHourData.volumeUSD = ZERO_BD
-    poolHourData.feesUSD = ZERO_BD
+    poolHourData.lpFeesUSD = ZERO_BD
+    poolHourData.uniswapProtocolFeesUSD = ZERO_BD
+    poolHourData.ascntProtocolFeesUSD = ZERO_BD
     poolHourData.txCount = ZERO_BI
     poolHourData.swapCount = ZERO_BI
     poolHourData.sumDynamicFeePips = ZERO_BI
@@ -180,10 +184,7 @@ export function updateTokenDayData(
   const timestamp = event.block.timestamp.toI32()
   const dayID = timestamp / 86400
   const dayStartTimestamp = dayID * 86400
-  const tokenDayID = token.id
-    .toString()
-    .concat('-')
-    .concat(dayID.toString())
+  const tokenDayID = token.id + '-' + dayID.toString()
   const tokenPrice = token.derivedETH.times(bundle.ethPriceUSD)
 
   let tokenDayData = TokenDayData.load(tokenDayID)
@@ -193,7 +194,7 @@ export function updateTokenDayData(
     tokenDayData.token = token.id
     tokenDayData.volume = ZERO_BD
     tokenDayData.volumeUSD = ZERO_BD
-    tokenDayData.feesUSD = ZERO_BD
+    tokenDayData.lpFeesUSD = ZERO_BD
     tokenDayData.untrackedVolumeUSD = ZERO_BD
     // OHLC stays null until the period's first swap; see updatePoolDayData.
   }
@@ -236,10 +237,7 @@ export function updateTokenHourData(
   const timestamp = event.block.timestamp.toI32()
   const hourIndex = timestamp / 3600 // get unique hour within unix history
   const hourStartUnix = hourIndex * 3600 // want the rounded effect
-  const tokenHourID = token.id
-    .toString()
-    .concat('-')
-    .concat(hourIndex.toString())
+  const tokenHourID = token.id + '-' + hourIndex.toString()
   let tokenHourData = TokenHourData.load(tokenHourID)
   const tokenPrice = token.derivedETH.times(bundle.ethPriceUSD)
 
@@ -250,7 +248,7 @@ export function updateTokenHourData(
     tokenHourData.volume = ZERO_BD
     tokenHourData.volumeUSD = ZERO_BD
     tokenHourData.untrackedVolumeUSD = ZERO_BD
-    tokenHourData.feesUSD = ZERO_BD
+    tokenHourData.lpFeesUSD = ZERO_BD
     // OHLC stays null until the period's first swap; see updatePoolDayData.
   }
 
@@ -311,5 +309,32 @@ export function updateDynamicFeeAggregates(poolId: string, timestamp: i32, fee: 
     poolHourData.save()
   } else {
     log.warning('PoolHourData not found for dynamic-fee aggregate: {}', [hourPoolID])
+  }
+}
+
+// Ascnt's cut is taken by the hook after the Swap event of the same transaction,
+// so the period buckets already exist (handleSwap created them); add the USD
+// value of the take to both. A missing bucket means the take had no swap in
+// front of it, which the hook cannot produce, so only log it.
+export function addAscntProtocolFeesUSD(poolId: string, timestamp: i32, amountUSD: BigDecimal): void {
+  const dayID = timestamp / 86400
+  const hourIndex = timestamp / 3600
+  const dayPoolID = poolId.concat('-').concat(dayID.toString())
+  const hourPoolID = poolId.concat('-').concat(hourIndex.toString())
+
+  const poolDayData = PoolDayData.load(dayPoolID)
+  if (poolDayData !== null) {
+    poolDayData.ascntProtocolFeesUSD = poolDayData.ascntProtocolFeesUSD.plus(amountUSD)
+    poolDayData.save()
+  } else {
+    log.warning('PoolDayData not found for Ascnt protocol fee: {}', [dayPoolID])
+  }
+
+  const poolHourData = PoolHourData.load(hourPoolID)
+  if (poolHourData !== null) {
+    poolHourData.ascntProtocolFeesUSD = poolHourData.ascntProtocolFeesUSD.plus(amountUSD)
+    poolHourData.save()
+  } else {
+    log.warning('PoolHourData not found for Ascnt protocol fee: {}', [hourPoolID])
   }
 }

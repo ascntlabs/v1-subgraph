@@ -16,7 +16,8 @@ import {
   TimelockUpdated,
   TreasuryUpdated,
 } from '../types/AscntGovernance/AscntGovernance'
-import { Protocol } from '../types/schema'
+import { Pool, PoolManager, Protocol } from '../types/schema'
+import { getSubgraphConfig, SubgraphConfig } from '../utils/chains'
 import { ONE_BI, ZERO_BI } from '../utils/constants'
 import { loadOrCreateHook } from '../utils/hookEntity'
 
@@ -104,9 +105,51 @@ export function handleSubscriberRegistered(event: SubscriberRegistered): void {
 }
 
 export function handleSubscriberRemoved(event: SubscriberRemoved): void {
+  handleSubscriberRemovedHelper(event)
+}
+
+// Removal is one-way on-chain (only the factory registers, and only inside
+// deployHook), and it decommissions the hook: protocol fee pushed to zero and
+// add-liquidity force-paused. So the hook's pools stop being Ascnt pools for
+// good: clear the flag, drop them from PoolManager.ascntPools, and the swap
+// overlay stops accruing (ascntCore gates on isAscntPool). Uniswap-level swap
+// and liquidity data for the pool keeps indexing as usual.
+export function handleSubscriberRemovedHelper(
+  event: SubscriberRemoved,
+  subgraphConfig: SubgraphConfig = getSubgraphConfig(),
+): void {
   const hook = loadOrCreateHook(event.params.hook, event)
   hook.isSubscriber = false
+  hook.subscriberRemovedAtBlock = event.block.number
+  hook.subscriberRemovedAtTimestamp = event.block.timestamp
   hook.save()
+
+  const poolManager = PoolManager.load(subgraphConfig.poolManagerAddress)
+  if (poolManager === null) {
+    return
+  }
+
+  const ascntPools = poolManager.ascntPools
+  const remaining: string[] = []
+  let removed = 0
+  for (let i = 0; i < ascntPools.length; i++) {
+    const pool = Pool.load(ascntPools[i])
+    if (pool === null || pool.hooks != hook.id) {
+      remaining.push(ascntPools[i])
+      continue
+    }
+    pool.isAscntPool = false
+    pool.ascntRemovedAtBlock = event.block.number
+    pool.ascntRemovedAtTimestamp = event.block.timestamp
+    pool.save()
+    removed++
+  }
+
+  if (removed > 0) {
+    poolManager.ascntPools = remaining
+    poolManager.ascntPoolCount = poolManager.ascntPoolCount.minus(BigInt.fromI32(removed))
+    poolManager.save()
+  }
 }
 
 export function handleSubscriberPushFailed(event: SubscriberPushFailed): void {

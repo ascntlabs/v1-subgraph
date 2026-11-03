@@ -22,11 +22,12 @@ export const TEST_CONFIG: SubgraphConfig = {
   stablecoinWrappedNativePoolId: USDC_WETH_POOL_ID,
   stablecoinIsToken0: true,
   wrappedNativeAddress: WETH_MAINNET_ADDRESS,
-  minimumNativeLocked: ZERO_BD,
+  minimumUSDLocked: ZERO_BD,
   stablecoinAddresses: [USDC_MAINNET_ADDRESS],
   whitelistTokens: [WETH_MAINNET_ADDRESS, USDC_MAINNET_ADDRESS],
   tokenOverrides: [],
   poolsToSkip: [],
+  legacyHookAddresses: [],
   poolMappings: [],
   nativeTokenDetails: {
     symbol: 'ETH',
@@ -263,11 +264,13 @@ export const createAndStoreTestPool = (poolFixture: PoolFixture): Pool => {
   pool.volumeToken1 = ZERO_BD
   pool.volumeUSD = ZERO_BD
   pool.untrackedVolumeUSD = ZERO_BD
-  pool.feesUSD = ZERO_BD
+  pool.lpFeesUSD = ZERO_BD
+  pool.lpFeesToken0 = ZERO_BD
+  pool.lpFeesToken1 = ZERO_BD
+  pool.uniswapProtocolFeesUSD = ZERO_BD
+  pool.uniswapProtocolFeesToken0 = ZERO_BD
+  pool.uniswapProtocolFeesToken1 = ZERO_BD
   pool.txCount = ZERO_BI
-  pool.collectedFeesToken0 = ZERO_BD
-  pool.collectedFeesToken1 = ZERO_BD
-  pool.collectedFeesUSD = ZERO_BD
   pool.totalValueLockedToken0 = ZERO_BD
   pool.totalValueLockedToken1 = ZERO_BD
   pool.totalValueLockedUSD = ZERO_BD
@@ -278,8 +281,15 @@ export const createAndStoreTestPool = (poolFixture: PoolFixture): Pool => {
   pool.hooks = ADDRESS_ZERO
   pool.isAscntPool = false
   pool.isDynamicFee = false
-  pool.protocolFeesToken0 = ZERO_BI
-  pool.protocolFeesToken1 = ZERO_BI
+  pool.ascntProtocolFeesToken0 = ZERO_BD
+  pool.ascntProtocolFeesToken1 = ZERO_BD
+  pool.ascntProtocolFeesUSD = ZERO_BD
+  pool.poolFee = BigInt.fromI32(feeTier)
+  pool.lpFee = BigInt.fromI32(feeTier)
+  pool.ascntProtocolFee = ZERO_BI
+  pool.totalSwapFee = BigInt.fromI32(feeTier)
+  pool.uniswapProtocolFeeZeroForOne = ZERO_BI
+  pool.uniswapProtocolFeeOneForZero = ZERO_BI
 
   pool.save()
   return pool
@@ -294,7 +304,7 @@ export const createAndStoreTestToken = (tokenFixture: TokenFixture): Token => {
   token.volume = ZERO_BD
   token.volumeUSD = ZERO_BD
   token.untrackedVolumeUSD = ZERO_BD
-  token.feesUSD = ZERO_BD
+  token.lpFeesUSD = ZERO_BD
   token.txCount = ZERO_BI
   token.poolCount = ZERO_BI
   token.totalValueLocked = ZERO_BD
@@ -308,6 +318,14 @@ export const createAndStoreTestToken = (tokenFixture: TokenFixture): Token => {
 }
 
 // Typescript for Subgraphs do not support Record types so we use a 2D string array to represent the object instead.
+// ascntBeforeSwapCore / ascntAfterSwapCore skip pools that are not Ascnt pools, so
+// overlay tests flag theirs after creating it (createAndStoreTestPool leaves it false).
+export const flagAscntPool = (poolId: string): void => {
+  const pool = Pool.load(poolId)!
+  pool.isAscntPool = true
+  pool.save()
+}
+
 export const assertObjectMatches = (entityType: string, id: string, obj: string[][]): void => {
   for (let i = 0; i < obj.length; i++) {
     assert.fieldEquals(entityType, id, obj[i][0], obj[i][1])

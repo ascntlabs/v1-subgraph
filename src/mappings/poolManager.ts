@@ -2,7 +2,7 @@ import { BigInt, log } from '@graphprotocol/graph-ts'
 
 import { Initialize as InitializeEvent } from '../types/PoolManager/PoolManager'
 import { PoolManager } from '../types/schema'
-import { Bundle, Pool, Token } from '../types/schema'
+import { Bundle, Hook, Pool, Token } from '../types/schema'
 import {
   getStaticNativePriceUSD,
   getSubgraphConfig,
@@ -10,6 +10,7 @@ import {
   SubgraphConfig,
 } from '../utils/chains'
 import { ADDRESS_ZERO, ONE_BD, ONE_BI, ZERO_BD, ZERO_BI } from '../utils/constants'
+import { loadOrCreateLegacyHook } from '../utils/hookEntity'
 import { updatePoolDayData, updatePoolHourData } from '../utils/intervalUpdates'
 import { findNativePerToken, getNativePriceInUSD, sqrtPriceX96ToTokenPrices } from '../utils/pricing'
 import { fetchTokenDecimals, fetchTokenName, fetchTokenSymbol, fetchTokenTotalSupply } from '../utils/token'
@@ -28,11 +29,12 @@ export function handleInitializeHelper(
   const whitelistTokens = subgraphConfig.whitelistTokens
   const tokenOverrides = subgraphConfig.tokenOverrides
   const poolsToSkip = subgraphConfig.poolsToSkip
+  const legacyHookAddresses = subgraphConfig.legacyHookAddresses
   const stablecoinWrappedNativePoolId = subgraphConfig.stablecoinWrappedNativePoolId
   const stablecoinIsToken0 = subgraphConfig.stablecoinIsToken0
   const wrappedNativeAddress = subgraphConfig.wrappedNativeAddress
   const stablecoinAddresses = subgraphConfig.stablecoinAddresses
-  const minimumNativeLocked = subgraphConfig.minimumNativeLocked
+  const minimumUSDLocked = subgraphConfig.minimumUSDLocked
   const nativeTokenDetails = subgraphConfig.nativeTokenDetails
   const poolId = event.params.id.toHexString()
   const usdStableStableHookAddresses = getUSDStableStableHookAddresses()
@@ -49,8 +51,8 @@ export function handleInitializeHelper(
     poolManager.totalVolumeETH = ZERO_BD
     poolManager.totalVolumeUSD = ZERO_BD
     poolManager.untrackedVolumeUSD = ZERO_BD
-    poolManager.totalFeesUSD = ZERO_BD
-    poolManager.totalFeesETH = ZERO_BD
+    poolManager.totalLpFeesUSD = ZERO_BD
+    poolManager.totalLpFeesETH = ZERO_BD
     poolManager.totalValueLockedETH = ZERO_BD
     poolManager.totalValueLockedUSD = ZERO_BD
     poolManager.totalValueLockedUSDUntracked = ZERO_BD
@@ -90,7 +92,7 @@ export function handleInitializeHelper(
     token0.derivedETH = ZERO_BD
     token0.volume = ZERO_BD
     token0.volumeUSD = ZERO_BD
-    token0.feesUSD = ZERO_BD
+    token0.lpFeesUSD = ZERO_BD
     token0.untrackedVolumeUSD = ZERO_BD
     token0.totalValueLocked = ZERO_BD
     token0.totalValueLockedUSD = ZERO_BD
@@ -117,7 +119,7 @@ export function handleInitializeHelper(
     token1.volume = ZERO_BD
     token1.volumeUSD = ZERO_BD
     token1.untrackedVolumeUSD = ZERO_BD
-    token1.feesUSD = ZERO_BD
+    token1.lpFeesUSD = ZERO_BD
     token1.totalValueLocked = ZERO_BD
     token1.totalValueLockedUSD = ZERO_BD
     token1.totalValueLockedUSDUntracked = ZERO_BD
@@ -142,6 +144,16 @@ export function handleInitializeHelper(
   pool.token1 = token1.id
   pool.feeTier = BigInt.fromI32(event.params.fee)
   pool.isDynamicFee = event.params.fee == 8388608
+  // v4-core initialises pools with no protocol fee; ProtocolFeeUpdated sets it later
+  pool.uniswapProtocolFeeZeroForOne = ZERO_BI
+  pool.uniswapProtocolFeeOneForZero = ZERO_BI
+  // last-swap rates: a static pool's tier from the start; 0 on dynamic pools until
+  // the first swap resolves them (the flag is not a rate); see schema Pool.poolFee
+  const initialRate = pool.isDynamicFee ? ZERO_BI : pool.feeTier
+  pool.poolFee = initialRate
+  pool.lpFee = initialRate
+  pool.ascntProtocolFee = ZERO_BI
+  pool.totalSwapFee = initialRate
   pool.hooks = event.params.hooks.toHexString()
   pool.tickSpacing = BigInt.fromI32(event.params.tickSpacing)
   pool.createdAtTimestamp = event.block.timestamp
@@ -162,15 +174,38 @@ export function handleInitializeHelper(
   pool.volumeToken0 = ZERO_BD
   pool.volumeToken1 = ZERO_BD
   pool.volumeUSD = ZERO_BD
-  pool.feesUSD = ZERO_BD
+  pool.lpFeesUSD = ZERO_BD
+  pool.lpFeesToken0 = ZERO_BD
+  pool.lpFeesToken1 = ZERO_BD
+  pool.uniswapProtocolFeesUSD = ZERO_BD
+  pool.uniswapProtocolFeesToken0 = ZERO_BD
+  pool.uniswapProtocolFeesToken1 = ZERO_BD
   pool.untrackedVolumeUSD = ZERO_BD
   pool.isAscntPool = false
-  pool.protocolFeesToken0 = ZERO_BI
-  pool.protocolFeesToken1 = ZERO_BI
+  pool.ascntProtocolFeesToken0 = ZERO_BD
+  pool.ascntProtocolFeesToken1 = ZERO_BD
+  pool.ascntProtocolFeesUSD = ZERO_BD
 
-  pool.collectedFeesToken0 = ZERO_BD
-  pool.collectedFeesToken1 = ZERO_BD
-  pool.collectedFeesUSD = ZERO_BD
+  // The Hook entity behind the pool, when the subgraph has one. A factory hook
+  // exists from HookDeployed; a legacy hook is created here, at its first pool.
+  // A legacy hook's pools are Ascnt pools from Initialize: five of those hooks
+  // have no data source, so no PoolInitialized ever arrives for them, and the
+  // guard in the legacy PoolInitialized handler keeps the other two from
+  // counting twice.
+  let hook = Hook.load(pool.hooks)
+  if (legacyHookAddresses.includes(pool.hooks)) {
+    hook = loadOrCreateLegacyHook(event.params.hooks, event)
+  }
+  if (hook !== null) {
+    pool.hook = hook.id
+    if (hook.legacy) {
+      pool.isAscntPool = true
+      const ascntPools = poolManager.ascntPools
+      ascntPools.push(poolId)
+      poolManager.ascntPools = ascntPools
+      poolManager.ascntPoolCount = poolManager.ascntPoolCount.plus(ONE_BI)
+    }
+  }
 
   const isUSDStableStableHookPool = usdStableStableHookAddresses.includes(pool.hooks.toLowerCase())
   pool.isExternalLiquidity = isUSDStableStableHookPool
@@ -205,8 +240,9 @@ export function handleInitializeHelper(
   // real swap opens the candle at this standing price.
   updatePoolDayData(pool, event, null)
   updatePoolHourData(pool, event, null)
-  token1.derivedETH = findNativePerToken(token1, wrappedNativeAddress, stablecoinAddresses, minimumNativeLocked)
-  token0.derivedETH = findNativePerToken(token0, wrappedNativeAddress, stablecoinAddresses, minimumNativeLocked)
+  const now = event.block.timestamp
+  token1.derivedETH = findNativePerToken(token1, wrappedNativeAddress, stablecoinAddresses, minimumUSDLocked, now)
+  token0.derivedETH = findNativePerToken(token0, wrappedNativeAddress, stablecoinAddresses, minimumUSDLocked, now)
 
   token0.save()
   token1.save()

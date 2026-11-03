@@ -10,6 +10,7 @@ import { AfterSwap, BeforeSwap } from '../../src/types/SimHookMVPLegacy/SimHookM
 import {
   createAndStoreTestPool,
   createAndStoreTestToken,
+  flagAscntPool,
   invokePoolCreatedWithMockedEthCalls,
   MOCK_EVENT,
   TEST_CONFIG,
@@ -196,6 +197,7 @@ describe('Ascnt swap-staging pipeline', () => {
   beforeEach(() => {
     clearStore()
     invokePoolCreatedWithMockedEthCalls(MOCK_EVENT, TEST_CONFIG)
+    flagAscntPool(USDC_WETH_POOL_ID)
 
     const bundle = new Bundle('1')
     bundle.ethPriceUSD = TEST_ETH_PRICE_USD
@@ -250,6 +252,7 @@ describe('Ascnt swap-staging pipeline', () => {
   test('two pools in one tx: each cycle stitches its own swap, no cross-contamination', () => {
     // beforeEach set up pool A and the WETH/USDC tokens. Add pool B (WBTC/WETH).
     createAndStoreTestPool(WBTC_WETH_03_MAINNET_POOL_FIXTURE)
+    flagAscntPool(WBTC_WETH_POOL_ID)
     createAndStoreTestToken(WBTC_MAINNET_FIXTURE)
     const wbtc = Token.load(WBTC_MAINNET_FIXTURE.address)!
     wbtc.derivedETH = TEST_WETH_DERIVED_ETH // any non-zero derived price is fine here

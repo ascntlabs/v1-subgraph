@@ -1,6 +1,6 @@
 import { Address, BigInt, ethereum, log } from '@graphprotocol/graph-ts'
 
-import { Pool, ProtocolFeeCollection } from '../types/schema'
+import { Bundle, Pool, ProtocolFeeCollection, Token } from '../types/schema'
 import {
   AfterSwap as SimHookAfterSwapEvent,
   BeforeSwap as SimHookBeforeSwapEvent,
@@ -11,9 +11,10 @@ import {
   ProtocolFeeTakenAsClaims as ProtocolFeeTakenAsClaimsEvent,
 } from '../types/templates/SimHook/SimHook'
 import { getSubgraphConfig } from '../utils/chains'
-import { ZERO_BI } from '../utils/constants'
+import { ZERO_BD } from '../utils/constants'
 import { loadOrCreateHook } from '../utils/hookEntity'
-import { loadTransaction } from '../utils/index'
+import { convertTokenToDecimal, loadTransaction } from '../utils/index'
+import { addAscntProtocolFeesUSD } from '../utils/intervalUpdates'
 import { ascntAfterSwapCore, ascntBeforeSwapCore, ascntInitializedCore } from './ascntCore'
 
 // Handlers for the gov-version SimHook, instantiated per hook by
@@ -77,12 +78,28 @@ function protocolFeeTakenCore(
     return
   }
 
-  // nullable on pools that predate the v1.0.0 schema (grafted history)
-  const prev0 = pool.protocolFeesToken0
-  const prev1 = pool.protocolFeesToken1
-  pool.protocolFeesToken0 = (prev0 === null ? ZERO_BI : (prev0 as BigInt)).plus(amount0)
-  pool.protocolFeesToken1 = (prev1 === null ? ZERO_BI : (prev1 as BigInt)).plus(amount1)
+  // Ascnt's cut, charged on the unspecified currency, so one side is zero. Value
+  // it now: the take follows the Swap event of the same transaction, so token
+  // prices already reflect that swap.
+  const token0 = Token.load(pool.token0)
+  const token1 = Token.load(pool.token1)
+  const bundle = Bundle.load('1')
+  let amount0Decimal = ZERO_BD
+  let amount1Decimal = ZERO_BD
+  let amountUSD = ZERO_BD
+  if (token0 !== null && token1 !== null && bundle !== null) {
+    amount0Decimal = convertTokenToDecimal(amount0, token0.decimals)
+    amount1Decimal = convertTokenToDecimal(amount1, token1.decimals)
+    const amountETH = amount0Decimal.times(token0.derivedETH).plus(amount1Decimal.times(token1.derivedETH))
+    amountUSD = amountETH.times(bundle.ethPriceUSD)
+  } else {
+    log.warning('Ascnt protocol fee on pool {} not valued: token or bundle missing', [poolId])
+  }
+  pool.ascntProtocolFeesToken0 = pool.ascntProtocolFeesToken0.plus(amount0Decimal)
+  pool.ascntProtocolFeesToken1 = pool.ascntProtocolFeesToken1.plus(amount1Decimal)
+  pool.ascntProtocolFeesUSD = pool.ascntProtocolFeesUSD.plus(amountUSD)
   pool.save()
+  addAscntProtocolFeesUSD(pool.id, event.block.timestamp.toI32(), amountUSD)
 
   const transaction = loadTransaction(event)
   const collection = new ProtocolFeeCollection(transaction.id + '-' + event.logIndex.toString())

@@ -20,13 +20,15 @@ export abstract class SqrtPriceMath {
     const numerator1 = liquidity.leftShift(96)
     const numerator2 = sqrtRatioBX96.minus(sqrtRatioAX96)
 
-    return roundUp
-      ? FullMath.mulDivRoundingUp(
-          FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96),
-          ONE_BI,
-          sqrtRatioAX96,
-        )
-      : numerator1.times(numerator2).div(sqrtRatioBX96).div(sqrtRatioAX96)
+    if (roundUp) {
+      return FullMath.mulDivRoundingUp(
+        FullMath.mulDivRoundingUp(numerator1, numerator2, sqrtRatioBX96),
+        ONE_BI,
+        sqrtRatioAX96,
+      )
+    }
+    const dividedByB = numerator1.times(numerator2).div(sqrtRatioBX96)
+    return dividedByB.div(sqrtRatioAX96)
   }
 
   public static getAmount1Delta(

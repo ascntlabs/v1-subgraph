@@ -6,6 +6,7 @@ import { BeforeSwap } from '../../src/types/SimHookMVPLegacy/SimHookMVPLegacy'
 import {
   assertObjectMatches,
   createAndStoreTestPool,
+  flagAscntPool,
   MOCK_EVENT,
   USDC_WETH_05_MAINNET_POOL_FIXTURE,
   USDC_WETH_POOL_ID,
@@ -69,6 +70,7 @@ describe('handleAscntBeforeSwap', () => {
   test('creates SwapStaging with before-swap fields and updates Pool snapshot', () => {
     clearStore()
     createAndStoreTestPool(USDC_WETH_05_MAINNET_POOL_FIXTURE)
+    flagAscntPool(USDC_WETH_POOL_ID)
 
     const event = createBeforeSwapEvent(BEFORE_SWAP_FIXTURE)
     handleAscntBeforeSwapHelper(event)

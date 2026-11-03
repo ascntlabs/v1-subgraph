@@ -9,3 +9,4 @@ tests/.latest.json
 generated/
 NOTES.md
 .claude
+__pycache__/

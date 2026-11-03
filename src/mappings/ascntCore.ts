@@ -1,6 +1,6 @@
 import { BigInt, ethereum, log, store } from '@graphprotocol/graph-ts'
 
-import { Pool, PoolManager, Swap, SwapStaging } from '../types/schema'
+import { Hook, Pool, PoolManager, Swap, SwapStaging } from '../types/schema'
 import { SubgraphConfig } from '../utils/chains'
 import { ONE_BI } from '../utils/constants'
 import { loadTransaction } from '../utils/index'
@@ -40,6 +40,11 @@ export function ascntBeforeSwapCore(
     return
   }
 
+  // Once governance removes the hook from the subscriber registry the pool is
+  // no longer an Ascnt pool (handleSubscriberRemoved) and its overlay stops
+  // here: no SwapStaging, so handleSwap has nothing to merge.
+  if (!pool.isAscntPool) return
+
   // BeforeSwap.priceImpact is the pre-swap simulated impact — map it onto
   // estimatedPriceImpact so the estimated-vs-real error metric keeps working.
   pool.sqrtPriceX96Before = sqrtPriceX96Before
@@ -73,6 +78,9 @@ export function ascntAfterSwapCore(
     log.warning('Pool not found: {}', [poolId])
     return
   }
+
+  // see ascntBeforeSwapCore: nothing was staged for a removed hook's pool
+  if (!pool.isAscntPool) return
 
   // pair with previous Swap Event
   const transaction = loadTransaction(event)
@@ -137,7 +145,19 @@ export function ascntInitializedCore(poolId: string, subgraphConfig: SubgraphCon
 
   if (pool.isAscntPool) return
 
+  // A pool initialised on a hook governance has already removed from the
+  // subscriber registry never becomes an Ascnt pool (removal is one-way).
+  const hook = Hook.load(pool.hooks)
+  if (hook !== null && hook.subscriberRemovedAtBlock !== null) {
+    log.info('Skipping Ascnt init for pool {}: hook {} was removed from the subscriber registry', [poolId, pool.hooks])
+    return
+  }
+
   pool.isAscntPool = true
+  if (hook !== null && pool.hook === null) {
+    // handleInitialize links Pool.hook; this covers a hook first seen after its pool
+    pool.hook = hook.id
+  }
   pool.save()
 
   const poolManager = PoolManager.load(poolManagerAddress)!

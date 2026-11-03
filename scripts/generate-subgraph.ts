@@ -24,7 +24,7 @@ const contractTemplates = {
       apiVersion: '0.0.7',
       language: 'wasm/assemblyscript',
       file: './src/mappings/poolManager.mapping.ts',
-      entities: ['Pool', 'Token'],
+      entities: ['Pool', 'Token', 'Position', 'PositionSnapshot'],
       abis: [
         { name: 'ERC20', file: './abis/ERC20.json' },
         { name: 'ERC20SymbolBytes', file: './abis/ERC20SymbolBytes.json' },
@@ -44,6 +44,10 @@ const contractTemplates = {
         {
           event: 'Swap(indexed bytes32,indexed address,int128,int128,uint160,uint128,int24,uint24)',
           handler: 'handleSwap',
+        },
+        {
+          event: 'ProtocolFeeUpdated(indexed bytes32,uint24)',
+          handler: 'handleProtocolFeeUpdated',
         },
       ],
     },

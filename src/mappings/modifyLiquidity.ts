@@ -18,6 +18,7 @@ import {
   updateTokenHourData,
 } from '../utils/intervalUpdates'
 import { getAmount0, getAmount1 } from '../utils/liquidityMath/liquidityAmounts'
+import { applyModifyLiquidityToPosition } from '../utils/position'
 import { calculateAmountUSD } from '../utils/pricing'
 import { createTick } from '../utils/tick'
 
@@ -28,6 +29,7 @@ export function handleModifyLiquidity(event: ModifyLiquidityEvent): void {
 export function handleModifyLiquidityHelper(
   event: ModifyLiquidityEvent,
   subgraphConfig: SubgraphConfig = getSubgraphConfig(),
+  positionManagerAddress: string = getPositionManagerAddress(),
 ): void {
   const poolManagerAddress = subgraphConfig.poolManagerAddress
   const usdStableStableHookAddresses = getUSDStableStableHookAddresses()
@@ -146,19 +148,23 @@ export function handleModifyLiquidityHelper(
     modifyLiquidity.amount0 = amount0
     modifyLiquidity.amount1 = amount1
     modifyLiquidity.amountUSD = amountUSD
+    // the price the amounts were computed at; a liquidity change never moves it
+    modifyLiquidity.sqrtPrice = currSqrtPriceX96
+    modifyLiquidity.tick = BigInt.fromI32(currTick)
     modifyLiquidity.tickLower = BigInt.fromI32(event.params.tickLower)
     modifyLiquidity.tickUpper = BigInt.fromI32(event.params.tickUpper)
     modifyLiquidity.logIndex = event.logIndex
 
     // Link to Position only when routed through canonical PositionManager —
     // its salt is bytes32(tokenId). Direct LPs use arbitrary salts.
-    const positionManagerAddress = getPositionManagerAddress()
     if (positionManagerAddress != '' && event.params.sender.equals(Address.fromString(positionManagerAddress))) {
       // salt is big-endian bytes32(tokenId); BigInt.fromUnsignedBytes is little-endian
       const tokenId = BigInt.fromUnsignedBytes(Bytes.fromUint8Array(event.params.salt.reverse()))
       const position = Position.load(tokenId.toString())
       if (position !== null) {
         modifyLiquidity.position = position.id
+        // fold the event into the position's state and write its snapshot
+        applyModifyLiquidityToPosition(position, modifyLiquidity, event, token0, token1, bundle)
       } else {
         log.warning('handleModifyLiquidity: Position {} not found for poolId {}', [tokenId.toString(), poolId])
       }

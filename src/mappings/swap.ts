@@ -4,7 +4,8 @@ import { AggregatorHook } from '../types/PoolManager/AggregatorHook'
 import { Swap as SwapEvent } from '../types/PoolManager/PoolManager'
 import { Bundle, Pool, PoolManager, Swap, SwapStaging, Token } from '../types/schema'
 import { getSubgraphConfig, getUSDStableStableHookAddresses, SubgraphConfig } from '../utils/chains'
-import { ONE_BI, ZERO_BD } from '../utils/constants'
+import { ONE_BD, ONE_BI, ZERO_BD, ZERO_BI } from '../utils/constants'
+import { lpFeeFromSwapFee } from '../utils/fees'
 import { convertTokenToDecimal, loadTransaction, safeDiv } from '../utils/index'
 import {
   updatePoolDayData,
@@ -19,6 +20,13 @@ import {
   sqrtPriceX96ToTokenPrices,
 } from '../utils/pricing'
 
+const PIPS_BD = BigDecimal.fromString('1000000')
+
+// `pips` millionths of `amount`
+function pipsOf(amount: BigDecimal, pips: BigInt): BigDecimal {
+  return amount.times(pips.toBigDecimal()).div(PIPS_BD)
+}
+
 export function handleSwap(event: SwapEvent): void {
   handleSwapHelper(event)
 }
@@ -29,7 +37,7 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
   const stablecoinIsToken0 = subgraphConfig.stablecoinIsToken0
   const wrappedNativeAddress = subgraphConfig.wrappedNativeAddress
   const stablecoinAddresses = subgraphConfig.stablecoinAddresses
-  const minimumNativeLocked = subgraphConfig.minimumNativeLocked
+  const minimumUSDLocked = subgraphConfig.minimumUSDLocked
   const whitelistTokens = subgraphConfig.whitelistTokens
   const nativeTokenDetails = subgraphConfig.nativeTokenDetails
   const usdStableStableHookAddresses = getUSDStableStableHookAddresses()
@@ -60,9 +68,52 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
     const amount0 = convertTokenToDecimal(event.params.amount0, token0.decimals).times(BigDecimal.fromString('-1'))
     const amount1 = convertTokenToDecimal(event.params.amount1, token1.decimals).times(BigDecimal.fromString('-1'))
 
-    // Update the pool feeTier with the fee from the swap event
-    // This is important for dynamic fee pools where we want to keep store the actual last fee rather storing the dynamic flag (8388608)
-    pool.feeTier = BigInt.fromI32(event.params.fee as i32)
+    // --- fee rates of this swap (README "Pool fee and TVL semantics") ---
+    // Swap.fee is the rate the swapper paid the pool on its gross input: the LP
+    // fee with Uniswap's protocol fee folded in (v4-core
+    // ProtocolFeeLibrary.calculateSwapFee). Uniswap's rate depends on the swap
+    // direction and is charged on the input token.
+    const swapFee = BigInt.fromI32(event.params.fee as i32)
+    const zeroForOne = event.params.amount0.lt(ZERO_BI)
+    const uniswapProtocolFee = zeroForOne ? pool.uniswapProtocolFeeZeroForOne : pool.uniswapProtocolFeeOneForZero
+    // Pool.swap takes Uniswap's cut of the gross input and credits LPs the rest of
+    // the fee, so the LP take is exactly swapFee - uniswapProtocolFee pips of input.
+    let lpTakePips = swapFee.minus(uniswapProtocolFee)
+    if (lpTakePips.lt(ZERO_BI)) {
+      lpTakePips = ZERO_BI
+    }
+    // The nominal LP rate: a static pool's tier, or on a dynamic-fee pool the
+    // hook's override recovered from the protocol-inclusive Swap.fee.
+    let lpFee = pool.isDynamicFee ? lpFeeFromSwapFee(swapFee, uniswapProtocolFee) : pool.feeTier
+    // An Ascnt hook staged its dynamic fee in BeforeSwap, earlier in this tx. That
+    // is the rate the pool charged before Uniswap's cut: the hook lowered its LP
+    // override to lpFee and takes the difference in afterSwap as a hook delta on
+    // the unspecified currency, so Ascnt's cut is never inside Swap.fee.
+    const transaction = loadTransaction(event)
+    const swapStagingId = transaction.id + '-' + poolId
+    const swapStaging = SwapStaging.load(swapStagingId)
+    let poolFee = lpFee
+    if (swapStaging !== null) {
+      const stagedDynamicFee = swapStaging.dynamicFeePips
+      if (stagedDynamicFee !== null) {
+        poolFee = stagedDynamicFee as BigInt
+        // The override can never exceed the hook's fee. lpFeeFromSwapFee picks the
+        // larger of two candidates when the floor makes them collide, so trim a
+        // one-pip overshoot instead of reporting a negative cut.
+        if (lpFee.gt(poolFee)) {
+          lpFee = poolFee
+        }
+      }
+    }
+    const ascntProtocolFee = poolFee.minus(lpFee)
+    const totalSwapFee = poolFee.plus(uniswapProtocolFee)
+
+    // feeTier is the pool key's fee and never changes; the last swap's rates sit
+    // beside it.
+    pool.poolFee = poolFee
+    pool.lpFee = lpFee
+    pool.ascntProtocolFee = ascntProtocolFee
+    pool.totalSwapFee = totalSwapFee
 
     // need absolute amounts for volume
     let amount0Abs = amount0
@@ -97,27 +148,54 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
       amountTotalUSDUntracked = amount0USD.plus(amount1USD).div(BigDecimal.fromString('2'))
     }
 
-    const feesETH = amountTotalETHTracked.times(pool.feeTier.toBigDecimal()).div(BigDecimal.fromString('1000000'))
-    const feesUSD = amountTotalUSDTracked.times(pool.feeTier.toBigDecimal()).div(BigDecimal.fromString('1000000'))
+    // --- fee amounts, split by who receives them ---
+    // LP fees are the exact LP take; Uniswap's cut is its rate on the same base.
+    // Both are charged on the gross input, the positive delta here. Ascnt's cut
+    // is accumulated by the hook's ProtocolFeeTaken handler, not here.
+    const lpFeesETH = pipsOf(amountTotalETHTracked, lpTakePips)
+    const lpFeesUSD = pipsOf(amountTotalUSDTracked, lpTakePips)
+    const uniswapProtocolFeesUSD = pipsOf(amountTotalUSDTracked, uniswapProtocolFee)
+    const grossInput0 = amount0.gt(ZERO_BD) ? amount0 : ZERO_BD
+    const grossInput1 = amount1.gt(ZERO_BD) ? amount1 : ZERO_BD
+    const lpFeesToken0 = pipsOf(grossInput0, lpTakePips)
+    const lpFeesToken1 = pipsOf(grossInput1, lpTakePips)
+    const uniswapProtocolFeesToken0 = pipsOf(grossInput0, uniswapProtocolFee)
+    const uniswapProtocolFeesToken1 = pipsOf(grossInput1, uniswapProtocolFee)
+
+    // TVL is the pool's liquidity-backed reserves, and the fee taken from the input
+    // never joins them: the LP share accrues to feeGrowth and is paid out on the
+    // position's next ModifyLiquidity (any liquidityDelta; v4 has no Collect event
+    // and ModifyLiquidity carries no fee amounts), the protocol share sits in
+    // protocolFeesAccrued until collectProtocolFees. Adding the gross input made
+    // TVL drift up by every fee ever charged. Add the input net of the whole swap
+    // fee; the output side (negative) leaves in full.
+    const feeFraction = swapFee.toBigDecimal().div(PIPS_BD)
+    const reserveDelta0 = amount0.gt(ZERO_BD) ? amount0.times(ONE_BD.minus(feeFraction)) : amount0
+    const reserveDelta1 = amount1.gt(ZERO_BD) ? amount1.times(ONE_BD.minus(feeFraction)) : amount1
 
     // global updates
     poolManager.txCount = poolManager.txCount.plus(ONE_BI)
     poolManager.totalVolumeETH = poolManager.totalVolumeETH.plus(amountTotalETHTracked)
     poolManager.totalVolumeUSD = poolManager.totalVolumeUSD.plus(amountTotalUSDTracked)
     poolManager.untrackedVolumeUSD = poolManager.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
-    poolManager.totalFeesETH = poolManager.totalFeesETH.plus(feesETH)
-    poolManager.totalFeesUSD = poolManager.totalFeesUSD.plus(feesUSD)
+    poolManager.totalLpFeesETH = poolManager.totalLpFeesETH.plus(lpFeesETH)
+    poolManager.totalLpFeesUSD = poolManager.totalLpFeesUSD.plus(lpFeesUSD)
 
     // reset aggregate tvl before individual pool tvl updates
     const currentPoolTvlETH = pool.totalValueLockedETH
     poolManager.totalValueLockedETH = poolManager.totalValueLockedETH.minus(currentPoolTvlETH)
 
-    // pool volume
+    // pool volume and fees
     pool.volumeToken0 = pool.volumeToken0.plus(amount0Abs)
     pool.volumeToken1 = pool.volumeToken1.plus(amount1Abs)
     pool.volumeUSD = pool.volumeUSD.plus(amountTotalUSDTracked)
     pool.untrackedVolumeUSD = pool.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
-    pool.feesUSD = pool.feesUSD.plus(feesUSD)
+    pool.lpFeesUSD = pool.lpFeesUSD.plus(lpFeesUSD)
+    pool.lpFeesToken0 = pool.lpFeesToken0.plus(lpFeesToken0)
+    pool.lpFeesToken1 = pool.lpFeesToken1.plus(lpFeesToken1)
+    pool.uniswapProtocolFeesUSD = pool.uniswapProtocolFeesUSD.plus(uniswapProtocolFeesUSD)
+    pool.uniswapProtocolFeesToken0 = pool.uniswapProtocolFeesToken0.plus(uniswapProtocolFeesToken0)
+    pool.uniswapProtocolFeesToken1 = pool.uniswapProtocolFeesToken1.plus(uniswapProtocolFeesToken1)
     pool.txCount = pool.txCount.plus(ONE_BI)
 
     // Update the pool with the new active liquidity, price, and tick.
@@ -125,24 +203,24 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
     pool.sqrtPrice = event.params.sqrtPriceX96
     pool.tick = BigInt.fromI32(event.params.tick as i32)
     if (!isUSDStableStableHookPool) {
-      pool.totalValueLockedToken0 = pool.totalValueLockedToken0.plus(amount0)
-      pool.totalValueLockedToken1 = pool.totalValueLockedToken1.plus(amount1)
+      pool.totalValueLockedToken0 = pool.totalValueLockedToken0.plus(reserveDelta0)
+      pool.totalValueLockedToken1 = pool.totalValueLockedToken1.plus(reserveDelta1)
     }
 
     // update token0 data
     token0.volume = token0.volume.plus(amount0Abs)
-    token0.totalValueLocked = token0.totalValueLocked.plus(amount0)
+    token0.totalValueLocked = token0.totalValueLocked.plus(reserveDelta0)
     token0.volumeUSD = token0.volumeUSD.plus(amountTotalUSDTracked)
     token0.untrackedVolumeUSD = token0.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
-    token0.feesUSD = token0.feesUSD.plus(feesUSD)
+    token0.lpFeesUSD = token0.lpFeesUSD.plus(lpFeesUSD)
     token0.txCount = token0.txCount.plus(ONE_BI)
 
     // update token1 data
     token1.volume = token1.volume.plus(amount1Abs)
-    token1.totalValueLocked = token1.totalValueLocked.plus(amount1)
+    token1.totalValueLocked = token1.totalValueLocked.plus(reserveDelta1)
     token1.volumeUSD = token1.volumeUSD.plus(amountTotalUSDTracked)
     token1.untrackedVolumeUSD = token1.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
-    token1.feesUSD = token1.feesUSD.plus(feesUSD)
+    token1.lpFeesUSD = token1.lpFeesUSD.plus(lpFeesUSD)
     token1.txCount = token1.txCount.plus(ONE_BI)
 
     // updated pool rates
@@ -150,12 +228,22 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
       const prices = sqrtPriceX96ToTokenPrices(pool.sqrtPrice, token0, token1, nativeTokenDetails)
       pool.token0Price = prices[0]
       pool.token1Price = prices[1]
+    }
+    pool.lastSwapTimestamp = event.block.timestamp
+
+    // Save before pricing. getNativePriceInUSD and findNativePerToken load pools
+    // from the store, and when this pool is the ETH/USD pool or a token's pricing
+    // pool they must see its post-swap price, reserves and lastSwapTimestamp, not
+    // the previous swap's (upstream reads them one swap late).
+    pool.save()
+
+    if (!isUSDStableStableHookPool) {
       bundle.ethPriceUSD = getNativePriceInUSD(stablecoinWrappedNativePoolId, stablecoinIsToken0)
     }
-
     bundle.save()
-    token0.derivedETH = findNativePerToken(token0, wrappedNativeAddress, stablecoinAddresses, minimumNativeLocked)
-    token1.derivedETH = findNativePerToken(token1, wrappedNativeAddress, stablecoinAddresses, minimumNativeLocked)
+    const now = event.block.timestamp
+    token0.derivedETH = findNativePerToken(token0, wrappedNativeAddress, stablecoinAddresses, minimumUSDLocked, now)
+    token1.derivedETH = findNativePerToken(token1, wrappedNativeAddress, stablecoinAddresses, minimumUSDLocked, now)
 
     /**
      * Things afffected by new USD rates
@@ -190,7 +278,6 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
     token1.totalValueLockedUSD = token1.totalValueLocked.times(token1.derivedETH).times(bundle.ethPriceUSD)
 
     // create Swap event
-    const transaction = loadTransaction(event)
     const swapId = transaction.id + '-' + event.logIndex.toString()
     const swap = new Swap(swapId)
     swap.transaction = transaction.id
@@ -206,9 +293,12 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
     swap.tick = BigInt.fromI32(event.params.tick as i32)
     swap.sqrtPriceX96 = event.params.sqrtPriceX96
     swap.logIndex = event.logIndex
+    swap.poolFee = poolFee
+    swap.lpFee = lpFee
+    swap.ascntProtocolFee = ascntProtocolFee
+    swap.uniswapProtocolFee = uniswapProtocolFee
+    swap.totalSwapFee = totalSwapFee
 
-    const swapStagingId = transaction.id + '-' + poolId
-    const swapStaging = SwapStaging.load(swapStagingId)
     if (swapStaging) {
       swap.sqrtPriceX96Before = swapStaging.sqrtPriceX96Before
       swap.illiqBefore = swapStaging.illiqBefore
@@ -236,32 +326,35 @@ export function handleSwapHelper(event: SwapEvent, subgraphConfig: SubgraphConfi
     poolDayData.volumeUSD = poolDayData.volumeUSD.plus(amountTotalUSDTracked)
     poolDayData.volumeToken0 = poolDayData.volumeToken0.plus(amount0Abs)
     poolDayData.volumeToken1 = poolDayData.volumeToken1.plus(amount1Abs)
-    poolDayData.feesUSD = poolDayData.feesUSD.plus(feesUSD)
+    poolDayData.lpFeesUSD = poolDayData.lpFeesUSD.plus(lpFeesUSD)
+    poolDayData.uniswapProtocolFeesUSD = poolDayData.uniswapProtocolFeesUSD.plus(uniswapProtocolFeesUSD)
 
     poolHourData.volumeUSD = poolHourData.volumeUSD.plus(amountTotalUSDTracked)
     poolHourData.volumeToken0 = poolHourData.volumeToken0.plus(amount0Abs)
     poolHourData.volumeToken1 = poolHourData.volumeToken1.plus(amount1Abs)
-    poolHourData.feesUSD = poolHourData.feesUSD.plus(feesUSD)
+    poolHourData.lpFeesUSD = poolHourData.lpFeesUSD.plus(lpFeesUSD)
+    poolHourData.uniswapProtocolFeesUSD = poolHourData.uniswapProtocolFeesUSD.plus(uniswapProtocolFeesUSD)
 
+    // the untracked buckets take the untracked amount (upstream adds the tracked one)
     token0DayData.volume = token0DayData.volume.plus(amount0Abs)
     token0DayData.volumeUSD = token0DayData.volumeUSD.plus(amountTotalUSDTracked)
-    token0DayData.untrackedVolumeUSD = token0DayData.untrackedVolumeUSD.plus(amountTotalUSDTracked)
-    token0DayData.feesUSD = token0DayData.feesUSD.plus(feesUSD)
+    token0DayData.untrackedVolumeUSD = token0DayData.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
+    token0DayData.lpFeesUSD = token0DayData.lpFeesUSD.plus(lpFeesUSD)
 
     token0HourData.volume = token0HourData.volume.plus(amount0Abs)
     token0HourData.volumeUSD = token0HourData.volumeUSD.plus(amountTotalUSDTracked)
-    token0HourData.untrackedVolumeUSD = token0HourData.untrackedVolumeUSD.plus(amountTotalUSDTracked)
-    token0HourData.feesUSD = token0HourData.feesUSD.plus(feesUSD)
+    token0HourData.untrackedVolumeUSD = token0HourData.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
+    token0HourData.lpFeesUSD = token0HourData.lpFeesUSD.plus(lpFeesUSD)
 
     token1DayData.volume = token1DayData.volume.plus(amount1Abs)
     token1DayData.volumeUSD = token1DayData.volumeUSD.plus(amountTotalUSDTracked)
-    token1DayData.untrackedVolumeUSD = token1DayData.untrackedVolumeUSD.plus(amountTotalUSDTracked)
-    token1DayData.feesUSD = token1DayData.feesUSD.plus(feesUSD)
+    token1DayData.untrackedVolumeUSD = token1DayData.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
+    token1DayData.lpFeesUSD = token1DayData.lpFeesUSD.plus(lpFeesUSD)
 
     token1HourData.volume = token1HourData.volume.plus(amount1Abs)
     token1HourData.volumeUSD = token1HourData.volumeUSD.plus(amountTotalUSDTracked)
-    token1HourData.untrackedVolumeUSD = token1HourData.untrackedVolumeUSD.plus(amountTotalUSDTracked)
-    token1HourData.feesUSD = token1HourData.feesUSD.plus(feesUSD)
+    token1HourData.untrackedVolumeUSD = token1HourData.untrackedVolumeUSD.plus(amountTotalUSDUntracked)
+    token1HourData.lpFeesUSD = token1HourData.lpFeesUSD.plus(lpFeesUSD)
 
     swap.save()
     token0DayData.save()

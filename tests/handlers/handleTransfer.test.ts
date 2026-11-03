@@ -1,9 +1,10 @@
-import { Address, ethereum } from '@graphprotocol/graph-ts'
+import { Address, BigInt, ethereum } from '@graphprotocol/graph-ts'
 import { afterEach, assert, clearStore, describe, test } from 'matchstick-as'
 
 import { handleTransferHelper } from '../../src/mappings/transfer'
 import { Transfer } from '../../src/types/PositionManager/PositionManager'
 import { Position } from '../../src/types/schema'
+import { initPositionState } from '../../src/utils/position'
 import { assertObjectMatches, MOCK_EVENT, POSITION_FIXTURE } from './constants'
 
 const from = POSITION_FIXTURE.owner
@@ -50,6 +51,8 @@ describe('handleTransfer', () => {
     position.owner = POSITION_FIXTURE.owner.toHexString()
     position.origin = POSITION_FIXTURE.origin.toHexString()
     position.createdAtTimestamp = MOCK_EVENT.block.timestamp
+    initPositionState(position)
+    position.liquidity = BigInt.fromI32(5)
 
     position.save()
 
@@ -71,6 +74,8 @@ describe('handleTransfer', () => {
       ['owner', to.toHexString()],
       ['origin', POSITION_FIXTURE.origin.toHexString()],
       ['createdAtTimestamp', MOCK_EVENT.block.timestamp.toString()],
+      // a transfer never touches the liquidity state
+      ['liquidity', '5'],
     ])
   })
 
@@ -95,6 +100,13 @@ describe('handleTransfer', () => {
       ['owner', to.toHexString()],
       ['origin', POSITION_FIXTURE.origin.toHexString()],
       ['createdAtTimestamp', MOCK_EVENT.block.timestamp.toString()],
+      // zeroed state until the mint's ModifyLiquidity, which follows in the same transaction
+      ['liquidity', '0'],
+      ['modifyCount', '0'],
+      ['depositedToken0', '0'],
+      ['withdrawnUSD', '0'],
     ])
+    assert.assertTrue(Position.load(POSITION_FIXTURE.id)!.pool === null)
+    assert.assertTrue(Position.load(POSITION_FIXTURE.id)!.closedAtTimestamp === null)
   })
 })

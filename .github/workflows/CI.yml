@@ -5,84 +5,72 @@ on:
     branches:
       - main
   pull_request:
-    branches:
-      - main
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
 jobs:
   lint:
-    name: lint
-    runs-on: ubuntu-latest
-
+    name: lint and format
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
     steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-
-      - name: Set up node
-        uses: actions/setup-node@v3
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '18.x'
-          registry-url: https://registry.npmjs.org
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: eslint
+        run: yarn lint
+      - name: prettier
+        run: npx prettier --check "src/**/*.ts" "tests/**/*.ts" "scripts/**/*.ts" "*.json"
+      - name: python scripts compile
+        run: python3 -m py_compile scripts/*.py
 
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "::set-output name=dir::$(yarn cache dir)"
-
-      - uses: actions/cache@v4
-        id: yarn-cache # use this to check for `cache-hit` (`steps.yarn-cache.outputs.cache-hit != 'true'`)
-        with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            yarn-
-
-      - name: Install dependencies
-        run: yarn install
-
-      - name: Lint
-        run: yarn run lint
-
-  build-and-test:
-    needs: lint
-    name: build-and-test
-    runs-on: ubuntu-latest
-
+  build:
+    name: build manifests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '18.x'
-
-      - name: Get yarn cache directory path
-        id: yarn-cache-dir-path
-        run: echo "::set-output name=dir::$(yarn cache dir)"
-
-      - uses: actions/cache@v4
-        id: yarn-cache # use this to check for `cache-hit` (`steps.yarn-cache.outputs.cache-hit != 'true'`)
-        with:
-          path: ${{ steps.yarn-cache-dir-path.outputs.dir }}
-          key: yarn-${{ hashFiles('**/yarn.lock') }}
-          restore-keys: |
-            yarn-
-
-      - name: Install dependencies
-        run: yarn install
-
-      - name: Build project
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: mainnet (codegen + build)
         run: yarn build
+      - name: robinhood
+        run: yarn build:robinhood
 
-      - name: Build Docker
-        run: yarn build:docker
-
-      - name: Test
-        # We need to run test in this mode because github CI is non-interactive
-        run: yarn test:no-tty
+  test:
+    name: matchstick
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: matchstick runtime deps
+        # the linux binary links against libpq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libpq5
+      - run: yarn codegen
+      - name: graph test (native binary, no docker)
+        run: yarn test:ci

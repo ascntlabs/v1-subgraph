@@ -5,19 +5,9 @@ schema:
   file: ./schema.graphql
 features:
   - nonFatalErrors
-  - grafting
-graft:
-  # Base: v0.0.3's deployment (the published SimHookMVP version). Block 25913295
-  # is the last block before the governance/factory deploy (25913296), so every
-  # governance, factory and hook event is replayed from the new contracts'
-  # genesis, and the live SimHook is discovered through HookDeployed like any
-  # later hook. Studio prunes entity history to a near-head window and rejects a
-  # graft block it no longer retains. If that happens, do NOT just raise the
-  # block (HookDeployed would never be replayed): switch to the fallback branch
-  # feat/1.0.0-graft-fallback, which adds a static data source for the live hook
-  # and bootstraps Hook/Protocol state from contract reads.
-  base: QmXHVmWPo83ovhhAyZY4txaNnbnfBLeAjsYDYpFJ4E8iF2
-  block: 25913295
+# No graft: this version rewrites the fee/TVL accumulators in handleSwap, which
+# only come out right on a full sync from the PoolManager start block. See README
+# "Fee/TVL accounting fix: full resync".
 dataSources:
   - source:
       abi: PoolManager
@@ -34,6 +24,8 @@ dataSources:
       entities:
         - Pool
         - Token
+        - Position
+        - PositionSnapshot
       abis:
         - name: ERC20
           file: ./abis/ERC20.json
@@ -55,6 +47,8 @@ dataSources:
         - event: Swap(indexed bytes32,indexed
             address,int128,int128,uint160,uint128,int24,uint24)
           handler: handleSwap
+        - event: ProtocolFeeUpdated(indexed bytes32,uint24)
+          handler: handleProtocolFeeUpdated
   - source:
       abi: PositionManager
       address: "0xbd216513d74c8cf14cf4747e6aaa6420ff64ee9e"
@@ -150,6 +144,7 @@ dataSources:
       file: ./src/mappings/hookFactory.mapping.ts
       entities:
         - Hook
+        - Protocol
       abis:
         - name: HookFactory
           file: ./abis/HookFactory.json

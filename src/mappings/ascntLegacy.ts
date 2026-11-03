@@ -40,6 +40,8 @@ export function handleAscntInitializedLegacyHelper(
     return
   }
 
+  // handleInitialize already flags pools on a hook listed in legacyHookAddresses;
+  // this only fires for a config that leaves the hook unlisted.
   if (pool.isAscntPool) return
 
   pool.isAscntPool = true

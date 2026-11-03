@@ -17,7 +17,8 @@ export function sqrtPriceX96ToTokenPrices(
 
   const num = sqrtPriceX96.times(sqrtPriceX96).toBigDecimal()
   const denom = BigDecimal.fromString(Q192.toString())
-  const price1 = num.div(denom).times(exponentToBigDecimal(token0Decimals)).div(exponentToBigDecimal(token1Decimals))
+  const decimalScale = exponentToBigDecimal(token0Decimals).div(exponentToBigDecimal(token1Decimals))
+  const price1 = num.div(denom).times(decimalScale)
 
   const price0 = safeDiv(BigDecimal.fromString('1'), price1)
   return [price0, price1]
@@ -32,67 +33,89 @@ export function getNativePriceInUSD(stablecoinWrappedNativePoolId: string, stabl
   }
 }
 
+// A pricing pool is fresh when it swapped within this window. Among the pools
+// that clear the floor, the largest fresh one prices the token; only when none
+// is fresh does the largest overall. So a deep pool that has gone quiet cannot
+// hold a token at a stale price while a smaller pool trades it every hour.
+export const PRICING_POOL_FRESH_SECONDS = BigInt.fromI32(86400)
+
+const TWO_BD = BigDecimal.fromString('2')
+
 /**
- * Search through graph to find derived Eth per token.
- * @todo update to be derived ETH (add stablecoin estimates)
+ * Native (ETH) price of a token from its whitelist pools: a pool's spot times the
+ * paired whitelisted token's own derivedETH. A pool qualifies when it has in-range
+ * liquidity and twice its whitelisted leg, valued at the bundle's native price,
+ * exceeds minimumUSDLocked (the leg stands in for half the pool, as tracked volume
+ * does). Pools are read from the store, so the caller must have saved the pool it
+ * just changed. README "Token pricing".
  **/
 export function findNativePerToken(
   token: Token,
   wrappedNativeAddress: string,
   stablecoinAddresses: string[],
-  minimumNativeLocked: BigDecimal,
+  minimumUSDLocked: BigDecimal,
+  timestamp: BigInt,
 ): BigDecimal {
   if (token.id == wrappedNativeAddress || token.id == ADDRESS_ZERO) {
     return ONE_BD
   }
-  const whiteList = token.whitelistPools
-  // for now just take USD from pool with greatest TVL
-  // need to update this to actually detect best rate based on liquidity distribution
-  let largestLiquidityETH = ZERO_BD
-  let priceSoFar = ZERO_BD
   const bundle = Bundle.load('1')!
 
   // hardcoded fix for incorrect rates
   // if whitelist includes token - get the safe price
   if (stablecoinAddresses.includes(token.id)) {
-    priceSoFar = safeDiv(ONE_BD, bundle.ethPriceUSD)
-  } else {
-    for (let i = 0; i < whiteList.length; ++i) {
-      const poolAddress = whiteList[i]
-      const pool = Pool.load(poolAddress)
+    return safeDiv(ONE_BD, bundle.ethPriceUSD)
+  }
 
-      if (pool) {
-        if (pool.liquidity.gt(ZERO_BI)) {
-          if (pool.token0 == token.id) {
-            // whitelist token is token1
-            const token1 = Token.load(pool.token1)
-            // get the derived ETH in pool
-            if (token1) {
-              const ethLocked = pool.totalValueLockedToken1.times(token1.derivedETH)
-              if (ethLocked.gt(largestLiquidityETH) && ethLocked.gt(minimumNativeLocked)) {
-                largestLiquidityETH = ethLocked
-                // token1 per our token * Eth per token1
-                priceSoFar = pool.token1Price.times(token1.derivedETH as BigDecimal)
-              }
-            }
-          }
-          if (pool.token1 == token.id) {
-            const token0 = Token.load(pool.token0)
-            // get the derived ETH in pool
-            if (token0) {
-              const ethLocked = pool.totalValueLockedToken0.times(token0.derivedETH)
-              if (ethLocked.gt(largestLiquidityETH) && ethLocked.gt(minimumNativeLocked)) {
-                largestLiquidityETH = ethLocked
-                // token0 per our token * ETH per token0
-                priceSoFar = pool.token0Price.times(token0.derivedETH as BigDecimal)
-              }
-            }
-          }
-        }
+  const whiteList = token.whitelistPools
+  let largestFreshETH = ZERO_BD
+  let freshPrice = ZERO_BD
+  let largestETH = ZERO_BD
+  let anyPrice = ZERO_BD
+  for (let i = 0; i < whiteList.length; ++i) {
+    const pool = Pool.load(whiteList[i])
+    if (pool === null || pool.liquidity.le(ZERO_BI)) {
+      continue
+    }
+    // the whitelisted leg: its ETH value, and the ETH price it implies for our token
+    let ethLocked = ZERO_BD
+    let price = ZERO_BD
+    if (pool.token0 == token.id) {
+      const token1 = Token.load(pool.token1)
+      if (token1 === null) {
+        continue
+      }
+      ethLocked = pool.totalValueLockedToken1.times(token1.derivedETH)
+      // token1 per our token * ETH per token1
+      price = pool.token1Price.times(token1.derivedETH)
+    } else if (pool.token1 == token.id) {
+      const token0 = Token.load(pool.token0)
+      if (token0 === null) {
+        continue
+      }
+      ethLocked = pool.totalValueLockedToken0.times(token0.derivedETH)
+      // token0 per our token * ETH per token0
+      price = pool.token0Price.times(token0.derivedETH)
+    } else {
+      continue
+    }
+    const legUSDTwice = ethLocked.times(bundle.ethPriceUSD).times(TWO_BD)
+    if (legUSDTwice.le(minimumUSDLocked)) {
+      continue
+    }
+    if (ethLocked.gt(largestETH)) {
+      largestETH = ethLocked
+      anyPrice = price
+    }
+    const lastSwap = pool.lastSwapTimestamp
+    if (lastSwap !== null && timestamp.minus(lastSwap as BigInt).le(PRICING_POOL_FRESH_SECONDS)) {
+      if (ethLocked.gt(largestFreshETH)) {
+        largestFreshETH = ethLocked
+        freshPrice = price
       }
     }
   }
-  return priceSoFar
+  return largestFreshETH.gt(ZERO_BD) ? freshPrice : anyPrice
 }
 
 /**
